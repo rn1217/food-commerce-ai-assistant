@@ -1,0 +1,23 @@
+# Python virtual environments
+.venv/
+venv/
+
+# Local secrets; keep only the example
+.env
+.env.*
+!.env.example
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local logs
+*.log
+logs/
+
+# Editor and OS files
+.idea/
+.vscode/
+Thumbs.db
+.DS_Store
