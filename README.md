@@ -2,7 +2,7 @@
 
 식품 이커머스 고객의 자연어 질문에서 조건을 추출하고, MySQL 상품 데이터로 검색 결과를 제공하는 포트폴리오 프로젝트입니다. 최종 목표는 LLM 기반 추천 이유와 FAQ 답변을 제공하는 로컬 웹 서비스입니다.
 
-**현재 단계: MySQL 상품 5개 조건 검색 + 공통 FAQ 10개 근거 검색. LLM은 아직 연결하지 않았습니다.**
+**현재 단계: MySQL 상품 검색 + FAQ 근거 검색 + 요청 로그 저장. LLM은 아직 연결하지 않았습니다.**
 
 ## 현재 기능
 
@@ -15,8 +15,9 @@
 | 미지원 입력 안내 | 인식한 조건이 하나도 없으면 검색하지 않고 지원 조건 안내 |
 | 결과 없음 | 빈 상품 목록과 안내 메시지 반환 |
 | DB 오류 처리 | MySQL 오류를 서버 로그에 기록하고 503 응답 |
+| 요청 로그 | 추천·FAQ의 성공/근거 없음/추가 질문/실패를 DB에 기록 |
 
-로그는 현재 서버 터미널의 오류 로그입니다. DB에 AI 요청을 저장하는 `ai_logs` 기능은 아직 없습니다.
+추천·FAQ 요청을 `ai_logs`에 `engine=rule`로 저장합니다. 질문, 응답 JSON, 처리 시간, 상태, 요청 ID를 기록하며, 저장 실패 시 콘솔에 기록하고 원래 응답을 유지합니다. 입력 검증에서 거절되는 422 요청과 GET API는 이번 DB 로그 범위에서 제외합니다.
 
 ## 기술과 구조
 
@@ -27,6 +28,8 @@
 food-commerce-ai-assistant/
 ├─ app/
 │  ├─ main.py                   # 입력 검증, API 응답, 오류 처리
+│  ├─ log_repository.py       # 요청 로그 INSERT와 commit
+│  ├─ log_service.py          # 시간 측정과 저장 실패 대응
 │  ├─ faq_repository.py       # 활성 공통 FAQ 조회
 │  ├─ faq_service.py          # 키워드 검색과 상태 결정
 │  ├─ database.py               # .env 로딩과 MySQL 연결
@@ -36,10 +39,13 @@ food-commerce-ai-assistant/
 ├─ sql/
 │  ├─ schema.sql               # DB와 products 테이블 정의
 │  ├─ seed_products.sql        # 가상 상품 5개 입력
-│  └─ create_faqs.sql          # FAQ 테이블 추가
+│  ├─ create_faqs.sql          # FAQ 테이블 추가
+│  └─ create_ai_logs.sql       # 요청 로그 테이블 추가
 ├─ data/faqs.json              # 가상 FAQ 10개
 ├─ scripts/init_faq.py         # FAQ 초기화
+├─ scripts/init_logs.py        # 로그 테이블 초기화
 ├─ tests/test_faq.py           # 검색·API 검증
+├─ tests/test_logs.py          # 기록·실패 시 응답 보존 검증
 ├─ docs/
 │  ├─ development_log.md       # 개발 기록 목차
 │  └─ devlog/                  # 날짜별 기록
@@ -99,6 +105,7 @@ MySQL 서버를 실행하고 Workbench에서 `food_commerce` DB와 `products` �
 
 ```powershell
 .\.venv\Scripts\python.exe -m scripts.init_faq
+.\.venv\Scripts\python.exe -m scripts.init_logs
 ```
 
 FAQ 초기화는 없는 ID만 추가하며, 기존 답변을 덮어쓰지 않습니다. JSON 변경을 기존 DB 행에 자동 반영하는 기능은 없습니다.
@@ -157,9 +164,27 @@ git check-ignore .env
 
 파일별 설명과 직접 확인할 내용은 [FAQ 학습 안내](docs/faq-guide.md)를 참고합니다.
 
+## 요청 로그 확인
+
+추천·FAQ 성공 응답의 `request_id`와 DB 기록을 연결합니다. 오류 응답에서는 `X-Request-ID` 헤더로 확인합니다. FAQ의 `matched`는 로그 상태 `success`로 저장하며 나머지는 `no_match`, `unsupported`, `needs_clarification`, `error`로 구분합니다.
+
+```sql
+SELECT request_id, feature, engine, user_query, status,
+       http_status, latency_ms, created_at
+FROM food_commerce.ai_logs
+ORDER BY log_id DESC
+LIMIT 10;
+```
+
+`created_at`은 UTC입니다. `latency_ms`는 입력 검증 후 함수 시작부터 응답 준비까지이며 로그 쓰기와 네트워크 시간은 제외합니다. 로그 쓰기는 동기 방식이어서 실제 사용자 대기에는 추가 시간이 발생할 수 있습니다.
+
+실제 DB 저장 6건의 응답/요청 ID/상태를 대조했습니다. 그중 1건은 검색 오류를 모의 주입한 검증 기록입니다. 로그 저장 실패 시 콘솔 fallback은 영구 저장을 보장하지 않습니다.
+
+[요청 로그 학습 안내](docs/request-logs-guide.md)에 파일 역할, 실행 방법, 실패 처리와 완료 조건을 정리했습니다.
+
 ## 문제 해결과 확인
 
-상품 기능의 개발자 수동 확인 결과와 9/28의 실제 DB·HTTP 검증을 기록했습니다. FAQ 및 추천 회귀 자동 테스트 11개가 통과했습니다. 성능 측정은 아직 하지 않았습니다.
+상품 기능의 개발자 수동 확인 결과와 9/28의 실제 DB·HTTP 검증을 기록했습니다. FAQ·추천 회귀·요청 로그 자동 테스트 24개가 통과했습니다. 성능 측정은 아직 하지 않았습니다.
 
 | 문제 | 개선 | 확인 결과 |
 | --- | --- | --- |
@@ -172,7 +197,7 @@ git check-ignore .env
 - 키워드 기반 검색이라 부정문을 이해하지 못합니다. `매운 선물`은 선물 조건만 적용하며, 미지원 조건을 모두 감지하지 못합니다.
 - 낮은 당도는 가상 등급 2 이하라는 고정 규칙이며 영양성분이나 건강 적합성 판단이 아닙니다.
 - 검색은 활성 상품을 ID 순으로 반환하며, 후보 수 제한이나 개인화 순위는 없습니다.
-- 상품 5개와 공통 FAQ 10개를 사용합니다. AI 요청 로그 테이블과 UI는 아직 미구현입니다.
+- 상품 5개와 공통 FAQ 10개를 사용하며 요청 로그를 저장합니다. UI는 아직 미구현입니다.
 - FAQ는 키워드 검색이며 부정문·복합 질문에서 오탐할 수 있습니다. 상품 전용 FAQ는 현재 검색에서 제외합니다.
 - LLM 연동 및 반환 상품 ID 검증은 다음 단계입니다. 아직 LLM 추천 정확도나 토큰 절감 효과를 주장하지 않습니다.
 - SQL과 의존성 목록은 정리됐습니다. FAQ의 DB 오류 응답은 모의 예외로 검사했으며 실제 장애 재현과 새 환경 전체 설치 검증은 남아 있습니다.

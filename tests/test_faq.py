@@ -37,6 +37,12 @@ def request_api(path, payload):
 
 
 class FaqTests(unittest.TestCase):
+    def setUp(self):
+        # 검색 테스트에서 실제 DB에 요청 로그가 쌓이지 않도록 대체한다.
+        writer = patch("app.log_service.insert_request_log")
+        writer.start()
+        self.addCleanup(writer.stop)
+
     @classmethod
     def setUpClass(cls):
         cls.faqs = json.loads(
