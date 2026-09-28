@@ -2,7 +2,7 @@
 
 식품 이커머스 고객의 자연어 질문에서 조건을 추출하고, MySQL 상품 데이터로 검색 결과를 제공하는 포트폴리오 프로젝트입니다. 최종 목표는 LLM 기반 추천 이유와 FAQ 답변을 제공하는 로컬 웹 서비스입니다.
 
-**현재 단계: 가상 상품 5개를 대상으로 한 MySQL 기반 조건 검색. LLM은 아직 연결하지 않았습니다.**
+**현재 단계: MySQL 상품 5개 조건 검색 + 공통 FAQ 10개 근거 검색. LLM은 아직 연결하지 않았습니다.**
 
 ## 현재 기능
 
@@ -10,6 +10,7 @@
 | --- | --- |
 | 상품 조회 | MySQL의 활성 상품 조회 |
 | 조건 검색 | 선물 가능, 개별포장, 낮은 당도 조건을 모두 만족하는 상품 검색 |
+| FAQ 검색 | 키워드 기반 검색, 최대 3개 원문과 출처 반환, 동점·근거 없음 안내 |
 | 입력 검증 | 앞뒤 공백 제거 후 1~500자 문자열 검사, 실패 시 422 |
 | 미지원 입력 안내 | 인식한 조건이 하나도 없으면 검색하지 않고 지원 조건 안내 |
 | 결과 없음 | 빈 상품 목록과 안내 메시지 반환 |
@@ -26,13 +27,19 @@
 food-commerce-ai-assistant/
 ├─ app/
 │  ├─ main.py                   # 입력 검증, API 응답, 오류 처리
+│  ├─ faq_repository.py       # 활성 공통 FAQ 조회
+│  ├─ faq_service.py          # 키워드 검색과 상태 결정
 │  ├─ database.py               # .env 로딩과 MySQL 연결
 │  ├─ product_repository.py     # 상품 조회와 조건 검색 SQL
 │  ├─ recommendation_service.py # 질문에서 조건 추출, 초기 리스트 검색 함수
 │  └─ sample_products.py        # 학습용 데이터; 현재 API 검색에는 사용하지 않음
 ├─ sql/
 │  ├─ schema.sql               # DB와 products 테이블 정의
-│  └─ seed_products.sql        # 가상 상품 5개 입력
+│  ├─ seed_products.sql        # 가상 상품 5개 입력
+│  └─ create_faqs.sql          # FAQ 테이블 추가
+├─ data/faqs.json              # 가상 FAQ 10개
+├─ scripts/init_faq.py         # FAQ 초기화
+├─ tests/test_faq.py           # 검색·API 검증
 ├─ docs/
 │  ├─ development_log.md       # 개발 기록 목차
 │  └─ devlog/                  # 날짜별 기록
@@ -61,6 +68,7 @@ SQL 조건은 개발자가 정의한 고정 구문으로 조립하고, 실제 �
 | GET | `/hello?name=민수` | 쿼리 파라미터 연습용 인사말 |
 | GET | `/api/products` | 활성 상품 조회 |
 | POST | `/api/recommendations` | 질문에 따른 상품 검색 |
+| POST | `/api/faq/search` | 공통 FAQ 검색; 생성 답변 없이 원문과 출처 제공 |
 
 추천 요청 예시:
 
@@ -79,16 +87,21 @@ SQL 조건은 개발자가 정의한 고정 구문으로 조립하고, 실제 �
 ```powershell
 py -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m pip install "PyMySQL[rsa]" python-dotenv
 ```
 
-현재 `requirements.txt`에는 새 DB 라이브러리가 아직 반영되지 않아 추가 설치 명령이 필요합니다. 버전 목록 갱신과 새 환경 재설치 검증은 남은 작업입니다. 개발자가 보고한 Python 버전은 3.14.7입니다.
+DB 라이브러리를 포함한 설치 버전은 `requirements.txt`에 반영돼 있습니다. 새 환경 전체 재설치 검증은 남은 작업입니다. 개발 Python 버전은 3.14.7입니다.
 
 ### 2. MySQL 준비
 
 MySQL 서버를 실행하고 Workbench에서 `food_commerce` DB와 `products` 테이블을 준비합니다. 초기 상품은 `sql/seed_products.sql`로 한 번 입력합니다. 이미 입력한 데이터에 재실행하면 기본키 중복 오류가 발생할 수 있습니다.
 
-**현재 파일 주의점:** `sql/schema.sql`에는 완성된 테이블 정의 앞에 미완성 `CREATE TABLE` 구문이 남아 있습니다. 새 DB 구성 전에 해당 구문을 정리해야 하며, 현재 파일 전체를 그대로 실행하는 재현 절차는 아직 검증하지 않았습니다. 기존 로컬 DB에서의 API 동작은 개발자가 확인했습니다.
+이전에 발견한 `schema.sql`의 미완성 구문은 정리됐습니다. 새 설치에서는 Workbench에서 `schema.sql`을 먼저 실행합니다. 아래 `.env` 설정과 패키지 설치를 마친 뒤 FAQ를 초기화합니다.
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.init_faq
+```
+
+FAQ 초기화는 없는 ID만 추가하며, 기존 답변을 덮어쓰지 않습니다. JSON 변경을 기존 DB 행에 자동 반영하는 기능은 없습니다.
 
 ### 3. 환경변수
 
@@ -123,9 +136,30 @@ git check-ignore .env
 
 추천 POST 요청은 `/docs`의 `Try it out`에서 실행합니다. 주소창 직접 접속은 GET 요청입니다.
 
+## FAQ 검색 사용과 테스트
+
+```json
+{"query": "배송비는 얼마인가요?"}
+```
+
+`POST /api/faq/search`에 보내면 `mode: retrieval_only`, `status: matched`와 FAQ 원문 목록을 반환합니다. FAQ 2가 첫 번째이며 `source`는 `faqs:2`입니다. 가상 정책임을 응답에 표시합니다.
+
+- `배송` → `needs_clarification`: 상위 점수가 같아 질문 구체화 안내
+- `비트코인 가격 알려줘` → `no_match`: 빈 근거 목록
+- 공백 질문 → HTTP 422
+- DB 오류 → HTTP 503 및 서버 오류 로그
+
+```powershell
+.\.venv\Scripts\python.exe -B -m unittest discover -s tests -v
+```
+
+테스트는 DB 조회를 대체해 실행하므로 DB 변경이나 LLM 비용이 없습니다. 실제 MySQL·임시 HTTP 서버로도 FAQ 6개 요청과 기존 상품/추천 API를 확인했습니다. 점수는 규칙 기반 우선순위로 정답 확률이 아닙니다.
+
+파일별 설명과 직접 확인할 내용은 [FAQ 학습 안내](docs/faq-guide.md)를 참고합니다.
+
 ## 문제 해결과 확인
 
-개발자가 로컬에서 수동 확인한 결과를 기록했습니다. 자동화 테스트나 성능 측정 결과는 아직 없습니다.
+상품 기능의 개발자 수동 확인 결과와 9/28의 실제 DB·HTTP 검증을 기록했습니다. FAQ 및 추천 회귀 자동 테스트 11개가 통과했습니다. 성능 측정은 아직 하지 않았습니다.
 
 | 문제 | 개선 | 확인 결과 |
 | --- | --- | --- |
@@ -138,11 +172,12 @@ git check-ignore .env
 - 키워드 기반 검색이라 부정문을 이해하지 못합니다. `매운 선물`은 선물 조건만 적용하며, 미지원 조건을 모두 감지하지 못합니다.
 - 낮은 당도는 가상 등급 2 이하라는 고정 규칙이며 영양성분이나 건강 적합성 판단이 아닙니다.
 - 검색은 활성 상품을 ID 순으로 반환하며, 후보 수 제한이나 개인화 순위는 없습니다.
-- 상품은 5개이며 FAQ, AI 요청 로그 테이블과 UI는 미구현입니다.
+- 상품 5개와 공통 FAQ 10개를 사용합니다. AI 요청 로그 테이블과 UI는 아직 미구현입니다.
+- FAQ는 키워드 검색이며 부정문·복합 질문에서 오탐할 수 있습니다. 상품 전용 FAQ는 현재 검색에서 제외합니다.
 - LLM 연동 및 반환 상품 ID 검증은 다음 단계입니다. 아직 LLM 추천 정확도나 토큰 절감 효과를 주장하지 않습니다.
-- 저장된 SQL 정리, 의존성 목록 갱신, DB 장애 응답 재현 시험과 설치 재현 확인이 필요합니다.
+- SQL과 의존성 목록은 정리됐습니다. FAQ의 DB 오류 응답은 모의 예외로 검사했으며 실제 장애 재현과 새 환경 전체 설치 검증은 남아 있습니다.
 - 이후 고정 평가 질문으로 응답 시간, 입력 토큰, 조건 위반률을 비교할 계획입니다.
 
 ## 개발 기록
 
-[날짜별 기록 목차](docs/development_log.md) · [2026-09-21: 요청 검증과 MySQL 검색](docs/devlog/2026-09-21.md)
+[날짜별 기록 목차](docs/development_log.md) · [9/21: MySQL 검색](docs/devlog/2026-09-21.md) · [9/28: FAQ 검색](docs/devlog/2026-09-28.md)

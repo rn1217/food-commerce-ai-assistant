@@ -4,19 +4,20 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from app.product_repository import get_active_products, search_products
 from app.recommendation_service import extract_conditions
+from app.faq_service import search_faqs
 
 # HTTP 요청을 받을 FastAPI 앱 생성
 app = FastAPI(title="Food Commerce AI Assistant")
 # Uvicorn의 로거를 사용해 서버 터미널에 오류 원인을 남긴다.
 logger = logging.getLogger("uvicorn.error")
 
-# POST 요청 본문의 JSON을 검사하는 모델. DB 테이블을 정의하는 클래스는 아니다.=
+# POST 요청 본문의 JSON을 검사하는 모델. DB 테이블을 정의하는 클래스는 아니다.
 class RecommendationRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True) # 문자열 앞뒤 공백 제거
 
     query: str = Field(min_length=1, max_length=500) # 공백 제거 후 길이가 1~500자여야 한다.
 
-# 질문 → 조건 추출 → Python 가상 상품 검색 → JSON 응답
+# 질문 → 조건 추출 → MySQL 상품 검색 → JSON 응답
 @app.post("/api/recommendations")
 def recommend_products(request: RecommendationRequest):
     conditions = extract_conditions(request.query) # 질문을 검색 조건 딕셔너리로 바꿈
@@ -94,3 +95,20 @@ def health_check(): #요청 처리할 함수 정의
 @app.get("/hello")
 def say_hello(name: str = "방문자"):
     return {"message": f"{name}님, 안녕하세요!"}
+
+# FAQ는 생성 답변이 아니라 검색된 근거 원문을 반환한다.
+class FaqSearchRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    query: str = Field(min_length=1, max_length=500)
+
+
+@app.post("/api/faq/search")
+def find_faq(request: FaqSearchRequest):
+    try:
+        return search_faqs(request.query)
+    except pymysql.MySQLError:
+        logger.exception("FAQ 검색 중 MySQL 오류 발생")
+        raise HTTPException(
+            status_code=503,
+            detail="FAQ 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.",
+        )
