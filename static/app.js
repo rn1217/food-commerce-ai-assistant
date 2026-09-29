@@ -1,0 +1,237 @@
+// 화면은 기존 API만 호출한다. DB 비밀번호나 API 키는 브라우저로 보내지 않는다.
+const modes = {
+  products: {
+    endpoint: "/api/recommendations", title: "어떤 상품을 찾으세요?",
+    description: "선물용, 개별포장, 덜 단 맛으로 찾아보세요.",
+    label: "원하는 상품 조건", button: "조건에 맞는 상품 찾기",
+    placeholder: "부모님 선물인데 너무 달지 않고 개별포장된 제품을 찾고 있어요.",
+    note: "현재 선물 여부·개별포장·당도 조건을 인식합니다. 다른 조건과 복잡한 부정문은 반영되지 않을 수 있습니다.",
+    examples: [["담백한 선물", "너무 달지 않고 개별포장된 선물 추천해줘"], ["개별포장 간식", "개별포장 상품 추천해줘"], ["선물용 상품", "선물 추천해줘"]],
+  },
+  faq: {
+    endpoint: "/api/faq/search", title: "무엇이 궁금하세요?",
+    description: "배송·보관·주문 등 등록된 안내를 찾아보세요.",
+    label: "궁금한 내용", button: "관련 FAQ 찾기",
+    placeholder: "배송비는 얼마인가요?",
+    note: "FAQ 원문을 그대로 보여드립니다. 키워드 검색은 질문의 의미를 놓칠 수 있으니 출처와 내용을 확인해 주세요.",
+    examples: [["배송비", "배송비는 얼마인가요?"], ["해동 방법", "냉동 떡 해동 방법 알려줘"], ["주문 취소", "주문을 취소하고 싶어요"]],
+  },
+};
+let currentMode = "products";
+let busy = false;
+const drafts = { products: "", faq: "" };
+const savedResults = { products: null, faq: null };
+const $ = (id) => document.getElementById(id);
+const form = $("search-form");
+const input = $("query");
+const content = $("results-content");
+
+// API와 사용자 입력은 innerHTML로 삽입하지 않고 textContent로 출력한다.
+function element(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function emptyState(title, description, symbol = "↗") {
+  const box = element("div", "empty-state");
+  const icon = element("div", "empty-symbol", symbol);
+  icon.setAttribute("aria-hidden", "true");
+  box.append(icon, element("strong", "", title), element("p", "", description));
+  content.replaceChildren(box);
+}
+
+function clearMeta() {
+  $("condition-tags").replaceChildren();
+  $("request-details").hidden = true;
+  $("request-details").open = false;
+  $("request-id").textContent = "";
+  $("result-status").classList.remove("error");
+}
+
+function showInitial() {
+  clearMeta();
+  $("results-title").textContent = currentMode === "products" ? "당신의 조건을 기다리고 있어요" : "궁금한 점, 근거에서 찾아볼게요";
+  $("result-status").textContent = "질문을 입력하거나 예시를 골라 검색해 보세요.";
+  $("result-count").textContent = "READY WHEN YOU ARE";
+  emptyState(currentMode === "products" ? "작은 조건이 좋은 선택이 됩니다" : "등록된 안내를 한곳에서", currentMode === "products" ? "선물 여부, 포장 방식, 당도를 기준으로 등록된 상품만 찾아드립니다." : "배송부터 보관까지, 관련 FAQ 원문과 출처를 함께 확인하세요.");
+}
+
+function setMode(mode) {
+  if (busy) return;
+  drafts[currentMode] = input.value;
+  currentMode = mode;
+  const config = modes[mode];
+  for (const name of Object.keys(modes)) {
+    const button = $(`mode-${name}`);
+    button.classList.toggle("active", name === mode);
+    button.setAttribute("aria-pressed", String(name === mode));
+  }
+  $("form-title").textContent = config.title;
+  $("form-description").textContent = config.description;
+  $("query-label").textContent = config.label;
+  $("scope-note").textContent = config.note;
+  $("submit-label").textContent = config.button;
+  input.placeholder = config.placeholder;
+  input.value = drafts[mode];
+  $("input-error").hidden = true;
+  input.removeAttribute("aria-invalid");
+  updateCount();
+  $("example-buttons").replaceChildren(...config.examples.map(([label, query]) => {
+    const button = element("button", "example-button", label);
+    button.type = "button";
+    button.addEventListener("click", () => {
+      input.value = query;
+      updateCount();
+      $("input-error").hidden = true;
+      input.removeAttribute("aria-invalid");
+      input.focus();
+    });
+    return button;
+  }));
+  if (savedResults[mode]) renderResults(savedResults[mode]);
+  else showInitial();
+}
+
+function updateCount() { $("char-count").textContent = `${input.value.length} / 500`; }
+
+function setBusy(value) {
+  busy = value;
+  $("results-area").setAttribute("aria-busy", String(value));
+  input.disabled = value;
+  document.querySelectorAll(".mode-button, .example-button, #submit-button").forEach(button => { button.disabled = value; });
+  $("submit-label").textContent = value ? "찾고 있어요…" : modes[currentMode].button;
+}
+
+function showRequestId(id) {
+  if (!id) return;
+  $("request-id").textContent = id;
+  $("request-details").hidden = false;
+}
+
+function renderProducts(data) {
+  const products = data.products || [];
+  $("results-title").textContent = products.length ? "이런 상품은 어떠세요?" : "조건을 조금 바꿔볼까요?";
+  $("result-count").textContent = `${products.length} PRODUCTS`;
+  $("result-status").textContent = data.message;
+  const conditions = data.conditions || {};
+  const tags = [];
+  if (conditions.gift_only) tags.push("선물 가능");
+  if (conditions.individual_only) tags.push("개별포장");
+  if (conditions.max_sweetness != null) tags.push(`당도 ${conditions.max_sweetness} 이하`);
+  $("condition-tags").replaceChildren(...tags.map(text => element("span", "tag", text)));
+  if (!products.length) {
+    emptyState("검색된 상품이 없습니다", "선물, 개별포장, 너무 달지 않은 조건을 사용하거나 조건을 줄여보세요.", "–");
+    return;
+  }
+  const grid = element("div", "product-grid");
+  const storage = {room: "실온 보관", refrigerated: "냉장 보관", frozen: "냉동 보관"};
+  for (const product of products) {
+    const card = element("article", "product-card");
+    const top = element("div", "product-top");
+    top.append(element("span", "category-badge", product.category), element("span", "product-id", `NO. ${String(product.product_id).padStart(2, "0")}`));
+    const price = element("div", "price", Number(product.price).toLocaleString("ko-KR"));
+    price.append(element("span", "", "원"));
+    const meta = element("div", "product-tags");
+    const labels = [`당도 ${product.sweetness}/5`, product.packaging === "individual" ? "개별포장" : "묶음포장", storage[product.storage_method] || product.storage_method];
+    if (product.gift_available) labels.push("선물 가능");
+    meta.append(...labels.map(text => element("span", "tag", text)));
+    card.append(top, element("h3", "", product.name), element("p", "product-description", product.description), price, meta);
+    grid.append(card);
+  }
+  content.replaceChildren(grid);
+}
+
+function renderFaq(data) {
+  const matches = data.matches || [];
+  const titles = { matched: "관련된 안내를 찾았어요", needs_clarification: "어떤 내용이 궁금하신가요?", no_match: "아직 등록된 안내가 없어요" };
+  $("results-title").textContent = titles[data.status] || "FAQ 검색 결과";
+  $("result-count").textContent = `${matches.length} SOURCES`;
+  $("result-status").textContent = data.message;
+  if (!matches.length) {
+    emptyState("답변 근거를 찾지 못했습니다", "배송비, 주문 취소, 보관 방법처럼 질문을 구체적으로 바꿔보세요.", "?");
+    return;
+  }
+  const list = element("div", "faq-list");
+  for (const faq of matches) {
+    const card = element("article", "faq-card");
+    const meta = element("div", "faq-meta");
+    meta.append(element("span", "faq-category", faq.category), element("span", "faq-source", `출처 ${faq.source}`));
+    card.append(meta, element("h3", "", faq.question), element("p", "faq-answer", faq.answer));
+    list.append(card);
+  }
+  content.replaceChildren(list);
+}
+
+function renderResults(data) {
+  clearMeta();
+  if (currentMode === "products") renderProducts(data);
+  else renderFaq(data);
+  showRequestId(data.request_id);
+}
+
+form.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (busy) return;
+  const query = input.value.trim();
+  if (!query || query.length > 500) {
+    $("input-error").textContent = "공백을 제외한 질문을 1~500자로 입력해 주세요.";
+    $("input-error").hidden = false;
+    input.setAttribute("aria-invalid", "true");
+    input.focus();
+    return;
+  }
+  $("input-error").hidden = true;
+  input.removeAttribute("aria-invalid");
+  savedResults[currentMode] = null;
+  clearMeta();
+  setBusy(true);
+  $("results-title").textContent = "등록된 정보를 확인하고 있어요";
+  $("result-status").textContent = "잠시만 기다려 주세요.";
+  $("result-count").textContent = "SEARCHING";
+  const loading = element("div", "loading-state");
+  loading.append(element("span", "spinner"), element("span", "", "조건에 맞는 근거를 찾는 중입니다."));
+  content.replaceChildren(loading);
+  const controller = new AbortController();
+  // 브라우저 대기만 중단한다. 서버에서 시작된 처리/로그 저장이 취소되는 것은 아니다.
+  const timeout = setTimeout(() => controller.abort(), 30000);
+  try {
+    const response = await fetch(modes[currentMode].endpoint, {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({query}), signal: controller.signal,
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      const message = typeof data.detail === "string" ? data.detail : "입력 내용을 확인한 뒤 다시 시도해 주세요.";
+      const error = new Error(message);
+      error.requestId = response.headers.get("X-Request-ID");
+      throw error;
+    }
+    savedResults[currentMode] = data;
+    renderResults(data);
+  } catch (error) {
+    $("results-title").textContent = "잠시 연결을 확인해 주세요";
+    $("result-count").textContent = "TRY AGAIN";
+    $("result-status").classList.add("error");
+    $("result-status").textContent = error.name === "AbortError"
+      ? "응답 대기 시간이 길어졌습니다. 서버 상태를 확인한 뒤 다시 시도해 주세요."
+      : error instanceof TypeError || error instanceof SyntaxError
+        ? "서버에 연결하지 못했습니다. 서버 실행 상태를 확인해 주세요."
+        : error.message;
+    emptyState("검색을 완료하지 못했습니다", "입력한 질문은 그대로 유지됩니다. 연결을 확인한 후 검색 버튼을 다시 눌러주세요.", "!");
+    showRequestId(error.requestId);
+  } finally {
+    clearTimeout(timeout);
+    setBusy(false);
+  }
+});
+
+input.addEventListener("input", () => {
+  updateCount();
+  $("input-error").hidden = true;
+  input.removeAttribute("aria-invalid");
+});
+$("mode-products").addEventListener("click", () => setMode("products"));
+$("mode-faq").addEventListener("click", () => setMode("faq"));
+setMode("products");

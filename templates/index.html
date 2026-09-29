@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="원하는 조건으로 식품을 찾고, 등록된 FAQ에서 필요한 정보를 확인하는 로컬 데모입니다.">
+  <title>Food Commerce AI Assistant</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Food Commerce 홈"><span class="brand-icon" aria-hidden="true">f.</span><span>FOOD COMMERCE<span class="brand-sub">AI ASSISTANT</span></span></a>
+    <div class="demo-badge"><span aria-hidden="true"></span>LOCAL DEMO</div>
+  </header>
+
+  <main class="page">
+    <section class="intro" aria-labelledby="page-title">
+      <div>
+        <p class="eyebrow">GOOD FOOD, A LITTLE EASIER</p>
+        <h1 id="page-title">원하는 한 가지를,<br>더 쉽게 찾도록.</h1>
+        <p class="intro-copy">선물부터 일상의 간식까지.<br class="mobile-break"> 원하는 조건과 궁금한 점을 알려주세요.</p>
+      </div>
+      <aside class="mode-note"><span class="small-dot" aria-hidden="true"></span><div><strong>지금은 데이터 기반 검색 모드</strong><p>등록된 상품과 FAQ를 찾아 보여드립니다.<br>LLM 답변 생성은 아직 연결되지 않았습니다.</p></div></aside>
+    </section>
+
+    <section class="workspace" aria-label="상품과 FAQ 검색">
+      <div class="composer">
+        <div class="section-label">01 / ASK</div>
+        <div class="mode-switch" role="group" aria-label="검색 기능 선택">
+          <button type="button" id="mode-products" class="mode-button active" aria-pressed="true">상품 찾기</button>
+          <button type="button" id="mode-faq" class="mode-button" aria-pressed="false">궁금한 점</button>
+        </div>
+        <h2 id="form-title">어떤 상품을 찾으세요?</h2>
+        <p id="form-description" class="muted">선물용, 개별포장, 덜 단 맛으로 찾아보세요.</p>
+        <form id="search-form" novalidate>
+          <label for="query" id="query-label">원하는 상품 조건</label>
+          <textarea id="query" name="query" rows="5" maxlength="500" placeholder="부모님 선물인데 너무 달지 않고 개별포장된 제품을 찾고 있어요." aria-describedby="form-description input-error" required></textarea>
+          <div class="input-meta"><span>최대 500자</span><span id="char-count">0 / 500</span></div>
+          <p id="input-error" class="input-error" role="alert" hidden></p>
+          <button id="submit-button" type="submit" class="submit-button"><span id="submit-label">조건에 맞는 상품 찾기</span><span aria-hidden="true">↗</span></button>
+        </form>
+        <div class="examples"><p class="examples-label">이렇게 물어보세요</p><div id="example-buttons"></div></div>
+        <div class="composer-foot"><span aria-hidden="true">↳</span><p id="scope-note">현재 선물 여부·개별포장·당도 조건을 인식합니다. 다른 조건과 복잡한 부정문은 반영되지 않을 수 있습니다.</p></div>
+      </div>
+
+      <div class="results-area" id="results-area" aria-busy="false">
+        <div class="result-heading"><div class="section-label">02 / DISCOVER</div><span id="result-count" class="result-count">READY WHEN YOU ARE</span></div>
+        <h2 id="results-title" tabindex="-1">당신의 조건을 기다리고 있어요</h2>
+        <p id="result-status" class="result-status" role="status" aria-live="polite">왼쪽에 질문을 입력하면 이곳에 결과가 나타납니다.</p>
+        <div id="condition-tags" class="condition-tags" aria-label="적용된 검색 조건"></div>
+        <div id="results-content"></div>
+        <details id="request-details" class="request-details" hidden><summary>요청 기록 확인</summary><p>이 ID로 같은 요청의 서버 로그를 찾을 수 있습니다.</p><code id="request-id"></code></details>
+      </div>
+    </section>
+    <footer class="page-footer"><p>포트폴리오용 가상 상품·정책입니다. 실제 주문·결제는 제공하지 않습니다.</p><span>FOOD COMMERCE / 2026</span></footer>
+  </main>
+  <noscript><p class="noscript">이 화면에서 검색하려면 브라우저의 JavaScript를 활성화해 주세요.</p></noscript>
+</body>
+</html>

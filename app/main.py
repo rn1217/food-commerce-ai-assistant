@@ -1,9 +1,12 @@
 import logging
 from time import perf_counter
 from uuid import uuid4
+from pathlib import Path
 
 import pymysql
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.product_repository import get_active_products, search_products
@@ -14,6 +17,16 @@ from app.log_service import record_request
 
 app = FastAPI(title="Food Commerce AI Assistant")
 logger = logging.getLogger("uvicorn.error")
+
+# static 폴더만 공개한다. 프로젝트 전체나 .env는 공개하지 않는다.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+app.mount("/static", StaticFiles(directory=PROJECT_ROOT / "static"), name="static")
+
+
+@app.get("/", include_in_schema=False)
+def home():
+    # 고정 HTML을 그대로 반환하므로 템플릿 엔진을 추가하지 않는다.
+    return FileResponse(PROJECT_ROOT / "templates" / "index.html")
 
 
 # 입력 검증 실패 시 함수에 들어오기 전에 422로 반환한다.

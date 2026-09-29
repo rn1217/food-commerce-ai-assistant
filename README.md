@@ -2,12 +2,13 @@
 
 식품 이커머스 고객의 자연어 질문에서 조건을 추출하고, MySQL 상품 데이터로 검색 결과를 제공하는 포트폴리오 프로젝트입니다. 최종 목표는 LLM 기반 추천 이유와 FAQ 답변을 제공하는 로컬 웹 서비스입니다.
 
-**현재 단계: MySQL 상품 검색 + FAQ 근거 검색 + 요청 로그 저장. LLM은 아직 연결하지 않았습니다.**
+**현재 단계: MySQL 상품 검색 + FAQ 근거 검색 + 요청 로그 저장 + 웹 화면. LLM은 아직 연결하지 않았습니다.**
 
 ## 현재 기능
 
 | 기능 | 동작 |
 | --- | --- |
+| 웹 화면 | 상품·FAQ 검색 전환, 결과 카드, 공백 검증, 로딩·오류 안내 |
 | 상품 조회 | MySQL의 활성 상품 조회 |
 | 조건 검색 | 선물 가능, 개별포장, 낮은 당도 조건을 모두 만족하는 상품 검색 |
 | FAQ 검색 | 키워드 기반 검색, 최대 3개 원문과 출처 반환, 동점·근거 없음 안내 |
@@ -21,8 +22,8 @@
 
 ## 기술과 구조
 
-현재 사용: Python, FastAPI, Pydantic, Uvicorn, MySQL, PyMySQL, python-dotenv.
-추후 사용: pandas, LLM API, HTML/CSS/JavaScript. 배포는 현재 범위에 포함하지 않습니다.
+현재 사용: Python, FastAPI, Pydantic, Uvicorn, MySQL, PyMySQL, python-dotenv, HTML/CSS/JavaScript.
+추후 사용: pandas, LLM API. 배포는 현재 범위에 포함하지 않습니다.
 
 ```text
 food-commerce-ai-assistant/
@@ -36,6 +37,9 @@ food-commerce-ai-assistant/
 │  ├─ product_repository.py     # 상품 조회와 조건 검색 SQL
 │  ├─ recommendation_service.py # 질문에서 조건 추출, 초기 리스트 검색 함수
 │  └─ sample_products.py        # 학습용 데이터; 현재 API 검색에는 사용하지 않음
+├─ templates/index.html       # 화면의 입력창과 결과 영역
+├─ static/style.css           # 디자인과 모바일 배치
+├─ static/app.js              # API 요청과 결과 표시
 ├─ sql/
 │  ├─ schema.sql               # DB와 products 테이블 정의
 │  ├─ seed_products.sql        # 가상 상품 5개 입력
@@ -70,6 +74,7 @@ SQL 조건은 개발자가 정의한 고정 구문으로 조립하고, 실제 �
 
 | 메서드 | 경로 | 역할 |
 | --- | --- | --- |
+| GET | `/` | 상품·FAQ 검색 웹 화면 |
 | GET | `/health` | HTTP 응답 확인; DB 상태 검사는 아님 |
 | GET | `/hello?name=민수` | 쿼리 파라미터 연습용 인사말 |
 | GET | `/api/products` | 활성 상품 조회 |
@@ -137,11 +142,12 @@ git check-ignore .env
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload
 ```
 
+- 웹 화면: http://127.0.0.1:8000/
 - API 문서: http://127.0.0.1:8000/docs
 - 상품 조회: http://127.0.0.1:8000/api/products
 - 서버 종료: `Ctrl + C`
 
-추천 POST 요청은 `/docs`의 `Try it out`에서 실행합니다. 주소창 직접 접속은 GET 요청입니다.
+웹 화면에서 질문을 입력하면 JavaScript가 POST 요청을 보냅니다. API 응답 JSON을 직접 확인하려면 `/docs`의 `Try it out`을 사용합니다. 주소창 직접 접속은 GET 요청입니다.
 
 ## FAQ 검색 사용과 테스트
 
@@ -197,7 +203,7 @@ LIMIT 10;
 - 키워드 기반 검색이라 부정문을 이해하지 못합니다. `매운 선물`은 선물 조건만 적용하며, 미지원 조건을 모두 감지하지 못합니다.
 - 낮은 당도는 가상 등급 2 이하라는 고정 규칙이며 영양성분이나 건강 적합성 판단이 아닙니다.
 - 검색은 활성 상품을 ID 순으로 반환하며, 후보 수 제한이나 개인화 순위는 없습니다.
-- 상품 5개와 공통 FAQ 10개를 사용하며 요청 로그를 저장합니다. UI는 아직 미구현입니다.
+- 상품 5개와 공통 FAQ 10개를 사용하며 요청 로그를 저장합니다. 상품·FAQ 검색 웹 화면을 제공합니다.
 - FAQ는 키워드 검색이며 부정문·복합 질문에서 오탐할 수 있습니다. 상품 전용 FAQ는 현재 검색에서 제외합니다.
 - LLM 연동 및 반환 상품 ID 검증은 다음 단계입니다. 아직 LLM 추천 정확도나 토큰 절감 효과를 주장하지 않습니다.
 - SQL과 의존성 목록은 정리됐습니다. FAQ의 DB 오류 응답은 모의 예외로 검사했으며 실제 장애 재현과 새 환경 전체 설치 검증은 남아 있습니다.
@@ -206,3 +212,15 @@ LIMIT 10;
 ## 개발 기록
 
 [날짜별 기록 목차](docs/development_log.md) · [9/21: MySQL 검색](docs/devlog/2026-09-21.md) · [9/28: FAQ 검색](docs/devlog/2026-09-28.md)
+
+
+## 웹 화면 사용
+
+1. 서버 실행 후 http://127.0.0.1:8000/ 에 접속합니다. HTML 파일을 직접 열지 않습니다.
+2. **상품 찾기 → 담백한 선물 → 조건에 맞는 상품 찾기**를 누릅니다. 초기 데이터에서는 상품 1, 5가 표시됩니다.
+3. **궁금한 점 → 배송비 → 관련 FAQ 찾기**로 FAQ 원문과 출처를 확인합니다.
+4. 공백 입력은 화면에서 차단합니다. 관련 없는 FAQ 질문은 근거 없음으로 표시합니다.
+
+흐름: 입력 → JavaScript `fetch`로 질문 JSON 전송 → FastAPI → MySQL 검색 및 요청 로그 → 응답 JSON → 상품/FAQ 카드. DB 비밀번호는 서버에만 두며 브라우저에 전달하지 않습니다.
+
+[웹 화면 학습 안내](docs/web-ui-guide.md) · [9/29 개발 기록](docs/devlog/2026-09-29.md)
