@@ -2,11 +2,11 @@
 const modes = {
   products: {
     endpoint: "/api/recommendations", title: "어떤 상품을 찾으세요?",
-    description: "선물용, 개별포장, 덜 단 맛으로 찾아보세요.",
+    description: "가격, 선물용, 포장 조건으로 찾아보세요.",
     label: "원하는 상품 조건", button: "조건에 맞는 상품 찾기",
     placeholder: "부모님 선물인데 너무 달지 않고 개별포장된 제품을 찾고 있어요.",
-    note: "현재 선물 여부·개별포장·당도 조건을 인식합니다. 다른 조건과 복잡한 부정문은 반영되지 않을 수 있습니다.",
-    examples: [["담백한 선물", "너무 달지 않고 개별포장된 선물 추천해줘"], ["개별포장 간식", "개별포장 상품 추천해줘"], ["선물용 상품", "선물 추천해줘"]],
+    note: "가격·선물 여부·개별포장 포함/제외·당도를 해석합니다. 가성비는 판매가격이 낮은 순서로 안내하며, 해석된 조건을 결과에서 확인해 주세요.",
+    examples: [["담백한 선물", "너무 달지 않고 개별포장된 선물 추천해줘"], ["가성비 상품", "가성비 있는 상품을 추천해줘 제일 싼 상품도 포함해서"], ["2만원 이하", "2만원 이하 상품 중 개별포장은 제외해줘"]],
   },
   faq: {
     endpoint: "/api/faq/search", title: "무엇이 궁금하세요?",
@@ -119,10 +119,16 @@ function renderProducts(data) {
   const tags = [];
   if (conditions.gift_only) tags.push("선물 가능");
   if (conditions.individual_only) tags.push("개별포장");
+  if (conditions.exclude_individual) tags.push("개별포장 제외");
   if (conditions.max_sweetness != null) tags.push(`당도 ${conditions.max_sweetness} 이하`);
+  if (conditions.min_price != null) tags.push(`${Number(conditions.min_price).toLocaleString("ko-KR")}원 이상`);
+  if (conditions.max_price != null) tags.push(`${Number(conditions.max_price).toLocaleString("ko-KR")}원 이하`);
+  if (conditions.sort === "price_asc") tags.push("가격 낮은 순");
+  if (conditions.sort === "price_desc") tags.push("가격 높은 순");
+  if (conditions.include_cheapest) tags.push("조건 내 최저가 포함");
   $("condition-tags").replaceChildren(...tags.map(text => element("span", "tag", text)));
   if (!products.length) {
-    emptyState("검색된 상품이 없습니다", "선물, 개별포장, 너무 달지 않은 조건을 사용하거나 조건을 줄여보세요.", "–");
+    emptyState("추천할 상품이 없습니다", "위 안내를 확인하고 가격·선물·포장·당도 조건을 바꿔보세요.", "–");
     return;
   }
   const grid = element("div", "product-grid");
@@ -138,6 +144,11 @@ function renderProducts(data) {
     if (product.gift_available) labels.push("선물 가능");
     meta.append(...labels.map(text => element("span", "tag", text)));
     card.append(top, element("h3", "", product.name), element("p", "product-description", product.description), price, meta);
+    if (product.recommendation_reason) {
+      const reason = element("div", "recommendation-reason");
+      reason.append(element("strong", "", "AI 추천 이유"), element("p", "", product.recommendation_reason));
+      card.append(reason);
+    }
     grid.append(card);
   }
   content.replaceChildren(grid);
@@ -195,7 +206,8 @@ form.addEventListener("submit", async (event) => {
   content.replaceChildren(loading);
   const controller = new AbortController();
   // 브라우저 대기만 중단한다. 서버에서 시작된 처리/로그 저장이 취소되는 것은 아니다.
-  const timeout = setTimeout(() => controller.abort(), 30000);
+  // 조건 해석과 이유 생성의 순차 호출을 기다린다. 서버의 작업 취소는 아니다.
+  const timeout = setTimeout(() => controller.abort(), 60000);
   try {
     const response = await fetch(modes[currentMode].endpoint, {
       method: "POST", headers: {"Content-Type": "application/json"},

@@ -1,5 +1,6 @@
 from datetime import datetime
 import json
+import os
 import unittest
 from unittest.mock import MagicMock, patch
 from uuid import UUID
@@ -13,6 +14,7 @@ from test_faq import request_api
 
 class RequestLoggingTests(unittest.TestCase):
     def setUp(self):
+        patch.dict(os.environ, {"LLM_ENABLED": "false"}).start()
         # 일반 테스트에서는 실제 DB에 쓰지 않는다.
         self.writer = patch("app.log_service.insert_request_log").start()
         self.addCleanup(patch.stopall)

@@ -13,13 +13,14 @@ def record_request(
     *, request_id: str, feature: str, query: str, response: dict,
     started_at: float, status: str, http_status: int,
     error_code: str | None = None,
+    engine: str = "rule",
 ):
     # 이 시점에 측정을 마치므로 아래 로그 저장 시간은 latency_ms에 포함되지 않는다.
     # perf_counter는 시스템 시각 변경의 영향을 받지 않는 경과 시간 측정용 시계다.
     record = {
         "request_id": request_id,
         "feature": feature,
-        "engine": "rule",  # 아직 LLM을 호출하지 않으므로 AI 호출로 표시하지 않는다.
+        "engine": engine,  # Gemini 호출 시도는 gemini, FAQ/생략은 rule.
         "user_query": query,
         "response": response,
         "latency_ms": max(0, round((perf_counter() - started_at) * 1000)),

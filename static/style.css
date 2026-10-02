@@ -662,3 +662,8 @@ textarea[aria-invalid=true] {
     transition:none!important
   }
 }
+
+/* DB 상품 카드에만 추가되는 AI 설명. 긴 문장도 카드 안에서 줄바꿈한다. */
+.recommendation-reason { margin-top:18px; padding:14px; border-radius:10px; background:#f0f4ea; font-size:13px; line-height:1.7; overflow-wrap:anywhere; }
+.recommendation-reason strong { color:#294f40; }
+.recommendation-reason p { margin:6px 0 0; }

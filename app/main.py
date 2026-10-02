@@ -10,9 +10,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.product_repository import get_active_products, search_products
-from app.recommendation_service import extract_conditions
+from app.query_service import interpret_query
 from app.faq_service import search_faqs
 from app.log_service import record_request
+from app.llm_recommendation_service import add_recommendation_reasons
 
 
 app = FastAPI(title="Food Commerce AI Assistant")
@@ -42,27 +43,41 @@ def recommend_products(request: RecommendationRequest):
     # 예기치 않은 실패까지 기록할 수 있도록 기본 상태를 오류로 준비한다.
     status, http_status, error_code = "error", 500, None
     response = {"detail": "추천 요청 처리 중 오류가 발생했습니다."}
+    engine = "rule"
 
     try:
-        conditions = extract_conditions(request.query)
-        has_condition = (
-            conditions["gift_only"]
-            or conditions["individual_only"]
-            or conditions["max_sweetness"] is not None
-        )
-        if not has_condition:
+        intent, interpretation = interpret_query(request.query, request_id)
+        conditions = intent.model_dump()
+        engine = interpretation["engine"]
+        if intent.unsupported or not intent.has_condition() or intent.needs_clarification:
             products = []
-            status = "unsupported"
-            message = (
-                "검색 조건을 찾지 못했습니다. "
-                "'선물', '개별포장', '너무 달지 않은' "
-                "조건을 포함해 질문해 주세요."
-            )
+            status = "needs_clarification" if intent.has_condition() and intent.needs_clarification else "unsupported"
+            message = "질문 전체를 검색 조건으로 확정하지 못했습니다. 가격·선물 여부·개별포장·당도 조건으로 구체화해 주세요."
+            if intent.unsupported:
+                message = "아직 지원하지 않는 조건: " + ", ".join(intent.unsupported) + ". 해당 조건을 제외하거나 질문을 바꿔 주세요."
         else:
-            products = search_products(**conditions)
+            products = search_products(**intent.search_arguments())
             status = "success" if products else "no_match"
             message = "조건에 맞는 상품을 찾았습니다." if products else "조건에 맞는 상품이 없습니다."
 
+        if intent.value_requested:
+            message += " 가성비는 중량·품질 비교가 아닌 판매가격이 낮은 순서로 해석했습니다."
+        if intent.include_cheapest:
+            message += " 최저가는 지정한 조건을 만족하는 활성 상품 안에서 비교합니다."
+        if interpretation["status"] == "fallback":
+            status, error_code = "fallback", "query_" + interpretation["error_code"]
+            message += " AI 조건 해석에 실패해 확인 가능한 단순 조건만 처리했습니다."
+
+        products, llm = add_recommendation_reasons(request.query, products, request_id)
+        if llm["engine"] == "gemini":
+            engine = "gemini"
+        if llm["status"] == "fallback":
+            status, error_code = "fallback", llm["error_code"]
+            message += " AI 설명을 생성하지 못해 상품 검색 결과만 표시합니다."
+        elif llm["status"] == "success":
+            message += " 최대 3개 상품에 AI 추천 이유를 덧붙였습니다."
+        elif llm["status"] == "disabled":
+            message += " AI 설명이 꺼져 있어 검색 결과만 표시합니다."
         http_status = 200
         response = {
             "request_id": request_id,
@@ -71,6 +86,8 @@ def recommend_products(request: RecommendationRequest):
             "count": len(products),
             "products": products,
             "message": message,
+            "llm": llm,
+            "interpretation": interpretation,
         }
         return response
     except pymysql.MySQLError as exc:
@@ -89,6 +106,7 @@ def recommend_products(request: RecommendationRequest):
             request_id=request_id, feature="recommendation", query=request.query,
             response=response, started_at=started_at, status=status,
             http_status=http_status, error_code=error_code,
+            engine=engine,
         )
 
 
