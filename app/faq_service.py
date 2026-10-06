@@ -51,7 +51,7 @@ def rank_faqs(query: str, faqs: list[dict]) -> dict:
         status = "matched"
         message = "관련 FAQ 원문입니다. 답변 생성 없이 등록된 내용을 보여드립니다."
 
-    # 관련 원문을 최대 3개 반환한다. 아직 하나의 최종 답변을 생성하지 않는다.
+    # 검색 단계에서는 관련 원문만 반환한다. AI 답변은 별도 서비스에서 생성한다.
     matches = ranked[:3]
     return {
         "query": query,

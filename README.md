@@ -1,144 +1,99 @@
 # Food Commerce AI Assistant
 
-식품 이커머스 고객의 자연어 질문에서 조건을 추출하고, MySQL 상품 데이터로 검색 결과를 제공하는 포트폴리오 프로젝트입니다. 최종 목표는 LLM 기반 추천 이유와 FAQ 답변을 제공하는 로컬 웹 서비스입니다.
+식품 이커머스 고객의 자연어 질문을 검색 조건으로 변환하고, **MySQL의 실제 상품과 FAQ를 근거로 답변하는 로컬 AI 웹 서비스**입니다.
 
-**현재 단계: MySQL 상품 검색 + FAQ 근거 검색 + 요청 로그 저장 + 웹 화면. 상품 추천 이유는 Gemini와 연결했습니다. FAQ는 원문 검색입니다.**
+개인 학습·포트폴리오 프로젝트이며 가상 상품 30개와 가상 FAQ 10개를 사용합니다. 상품 조건 검색, Gemini 추천 설명, FAQ 답변, 요청 로그와 HTML/CSS/JavaScript 화면을 구현했습니다. 배포 및 실제 고객 운영은 범위에 포함하지 않습니다.
 
-## 현재 기능
+[시스템 구조](docs/architecture.md) · [ERD](docs/erd.md) · [검증·문제 해결](docs/evaluation/product-validation.md) · [프로젝트 설명](docs/project-summary.md) · [제출 전 확인](docs/release-checklist.md)
 
-| 기능 | 동작 |
+## 해결하려는 문제
+
+“선물용인데 너무 달지 않고 개별포장된 상품”처럼 여러 조건을 함께 요청할 때, 조건에 맞는 상품과 이유를 확인할 수 있도록 합니다. 배송·보관 질문에는 등록된 FAQ를 찾아 답변과 원문 출처를 제공합니다.
+
+LLM은 질문 해석과 설명 생성을 맡습니다. 검색 조건과 상품 조회는 검증된 Python 로직 및 매개변수 SQL로 처리합니다. 모델 출력으로 DB의 상품명·가격을 덮어쓰지 않으며, 후보 밖 ID나 잘못된 FAQ 출처는 거절합니다. 이 검사가 생성 문장 전체의 사실성을 보장하지는 않습니다.
+
+## 주요 기능
+
+| 기능 | 현재 동작 |
 | --- | --- |
-| 웹 화면 | 상품·FAQ 검색 전환, 결과 카드, 공백 검증, 로딩·오류 안내 |
-| AI 추천 이유 | 검색 결과 앞 3개에 Gemini 설명 추가, ID 검증 실패/API 오류 시 상품만 표시 |
-| 상품 조회 | MySQL의 활성 상품 조회 |
-| 조건 검색 | Gemini 조건 해석, 선물·포장 포함/제외·당도·가격 범위·가격순 검색 |
-| FAQ 검색 | 키워드 기반 검색, 최대 3개 원문과 출처 반환, 동점·근거 없음 안내 |
-| 입력 검증 | 앞뒤 공백 제거 후 1~500자 문자열 검사, 실패 시 422 |
-| 미지원 입력 안내 | 인식한 조건이 하나도 없으면 검색하지 않고 지원 조건 안내 |
-| 결과 없음 | 빈 상품 목록과 안내 메시지 반환 |
-| DB 오류 처리 | MySQL 오류를 서버 로그에 기록하고 503 응답 |
-| 요청 로그 | 추천·FAQ의 성공/근거 없음/추가 질문/실패를 DB에 기록 |
+| 상품 데이터 | pandas로 CSV의 누락·중복·범위·허용값 검사 후 MySQL 저장 |
+| 자연어 조건 검색 | 선물 가능, 개별포장 포함/제외, 당도 상한, 최소/최대 가격, 가격 정렬 |
+| 추천 이유 | SQL 검색 결과 앞 3개에만 LLM 설명 추가, 전체 검색 결과는 유지 |
+| FAQ AI | 키워드로 최대 3개 근거 검색, 답변과 클릭 가능한 원문 출처 표시 |
+| 불확실한 요청 | 미지원 조건·모호한 조건·FAQ 근거 없음·동점은 안내 또는 답변 보류 |
+| 오류 대응 | 503에만 1초 뒤 1회 재시도, 실패 시 안전한 대체 응답 |
+| 요청 로그 | 요청 ID, 질문, 응답 JSON, 처리 시간, 상태, 오류 코드를 MySQL에 저장 |
 
-요청을 `ai_logs`에 저장합니다. 상품 LLM 호출 시도는 `engine=gemini`, FAQ와 호출 생략은 `engine=rule`입니다. AI 실패 시 `status=fallback`으로 기록하고 상품 검색 결과를 유지합니다. 질문, 응답 JSON, 처리 시간, 상태, 요청 ID를 기록하며, 저장 실패 시 콘솔에 기록하고 원래 응답을 유지합니다. 입력 검증에서 거절되는 422 요청과 GET API는 이번 DB 로그 범위에서 제외합니다.
+가성비는 **판매가격 오름차순**으로 정의합니다. 중량·품질 대비 가치나 개인화 순위를 계산하지 않습니다. “너무 달지 않은”은 가상 당도 2 이하이며 영양정보나 건강 적합성을 뜻하지 않습니다.
 
-## 기술과 구조
+## 기술과 데이터 흐름
 
-현재 사용: Python, FastAPI, Pydantic, Uvicorn, MySQL, PyMySQL, python-dotenv, HTML/CSS/JavaScript.
-상품 추천에 Gemini REST API를 사용합니다. 추후 사용: pandas. 배포는 현재 범위에 포함하지 않습니다.
+Python · FastAPI · Pydantic · MySQL/PyMySQL · pandas · Gemini REST API · python-dotenv · HTML/CSS/JavaScript
 
-```text
-food-commerce-ai-assistant/
-├─ app/
-│  ├─ query_service.py        # 자연어 조건 스키마와 해석 검증
-│  ├─ llm_client.py           # Gemini HTTP 요청과 응답
-│  ├─ llm_recommendation_service.py # 후보 제한, 이유 생성과 ID 검증
-│  ├─ main.py                   # 입력 검증, API 응답, 오류 처리
-│  ├─ log_repository.py       # 요청 로그 INSERT와 commit
-│  ├─ log_service.py          # 시간 측정과 저장 실패 대응
-│  ├─ faq_repository.py       # 활성 공통 FAQ 조회
-│  ├─ faq_service.py          # 키워드 검색과 상태 결정
-│  ├─ database.py               # .env 로딩과 MySQL 연결
-│  ├─ product_repository.py     # 상품 조회와 조건 검색 SQL
-│  ├─ recommendation_service.py # 질문에서 조건 추출, 초기 리스트 검색 함수
-│  └─ sample_products.py        # 학습용 데이터; 현재 API 검색에는 사용하지 않음
-├─ templates/index.html       # 화면의 입력창과 결과 영역
-├─ static/style.css           # 디자인과 모바일 배치
-├─ static/app.js              # API 요청과 결과 표시
-├─ sql/
-│  ├─ schema.sql               # DB와 products 테이블 정의
-│  ├─ seed_products.sql        # 가상 상품 5개 입력
-│  ├─ create_faqs.sql          # FAQ 테이블 추가
-│  └─ create_ai_logs.sql       # 요청 로그 테이블 추가
-├─ data/faqs.json              # 가상 FAQ 10개
-├─ scripts/init_faq.py         # FAQ 초기화
-├─ scripts/init_logs.py        # 로그 테이블 초기화
-├─ tests/test_faq.py           # 검색·API 검증
-├─ tests/test_logs.py          # 기록·실패 시 응답 보존 검증
-├─ docs/
-│  ├─ development_log.md       # 개발 기록 목차
-│  └─ devlog/                  # 날짜별 기록
-├─ .env.example
-├─ .gitignore
-├─ requirements.txt
-└─ README.md
+```mermaid
+flowchart LR
+    U[사용자] --> W[웹 화면]
+    W -->|질문 JSON| A[FastAPI]
+    A --> I[LLM 조건 해석 및 스키마 검증]
+    I --> S[매개변수 SQL 검색]
+    S --> D[(MySQL products)]
+    D --> R[후보 최대 3개 LLM 설명 및 ID 검증]
+    R --> A
+    A -->|응답 JSON| W
+    A --> L[(ai_logs)]
 ```
 
-## 요청 처리 흐름
+상품과 FAQ의 분기 및 오류 흐름은 [시스템 구조](docs/architecture.md), 테이블 관계는 [ERD](docs/erd.md)에 정리했습니다. 벡터 DB는 사용하지 않습니다. 작은 구조화 상품 데이터에는 SQL, 공통 FAQ에는 키워드 검색을 적용했습니다.
 
-```text
-질문 JSON → FastAPI 입력 검증 → extract_conditions()
-→ search_products() → MySQL SELECT → 조건과 상품 목록을 JSON으로 응답
-```
+## 로컬 실행: Windows PowerShell
 
-`GET /api/products`와 `POST /api/recommendations`는 모두 MySQL을 사용합니다. 추천 API는 초기 `filter_products()` 함수를 더 이상 호출하지 않습니다.
+프로젝트 루트에서 실행합니다. 기존 `.venv`가 있으면 환경 생성은 생략합니다.
 
-SQL 조건은 개발자가 정의한 고정 구문으로 조립하고, 실제 값은 `%s` 자리표시자와 별도 파라미터로 전달합니다. DB 연결과 커서는 `with` 블록에서 사용 후 정리합니다.
-
-## API
-
-| 메서드 | 경로 | 역할 |
-| --- | --- | --- |
-| GET | `/` | 상품·FAQ 검색 웹 화면 |
-| GET | `/health` | HTTP 응답 확인; DB 상태 검사는 아님 |
-| GET | `/hello?name=민수` | 쿼리 파라미터 연습용 인사말 |
-| GET | `/api/products` | 활성 상품 조회 |
-| POST | `/api/recommendations` | 질문에 따른 상품 검색 |
-| POST | `/api/faq/search` | 공통 FAQ 검색; 생성 답변 없이 원문과 출처 제공 |
-
-추천 요청 예시:
-
-```json
-{"query": "너무 달지 않고 개별포장된 선물 추천해줘"}
-```
-
-초기 데이터에서 `conditions`는 `gift_only: true`, `individual_only: true`, `max_sweetness: 2`이며, `count`는 2, 반환 상품 ID는 1과 5입니다. 응답에는 상품 전체 정보와 안내 메시지도 포함됩니다.
-
-## 로컬 실행 (Windows PowerShell)
-
-### 1. Python 환경
-
-프로젝트 폴더에서 실행합니다. 기존 `.venv`가 있으면 생성은 생략합니다.
+### 1. Python 환경과 패키지
 
 ```powershell
-py -m venv .venv
+python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-DB 라이브러리를 포함한 설치 버전은 `requirements.txt`에 반영돼 있습니다. 새 환경 전체 재설치 검증은 남은 작업입니다. 개발 Python 버전은 3.14.7입니다.
+`python` 명령을 찾지 못하면 설치한 Python 실행 경로를 사용합니다. Python Launcher가 등록된 환경에서는 `py -m venv .venv`도 사용할 수 있습니다. 실제 검증 환경과 범위는 [제출 전 확인](docs/release-checklist.md)을 참고하세요.
 
-### 2. MySQL 준비
+### 2. 환경변수
 
-MySQL 서버를 실행하고 Workbench에서 `food_commerce` DB와 `products` 테이블을 준비합니다. 초기 상품은 `sql/seed_products.sql`로 한 번 입력합니다. 이미 입력한 데이터에 재실행하면 기본키 중복 오류가 발생할 수 있습니다.
-
-이전에 발견한 `schema.sql`의 미완성 구문은 정리됐습니다. 새 설치에서는 Workbench에서 `schema.sql`을 먼저 실행합니다. 아래 `.env` 설정과 패키지 설치를 마친 뒤 FAQ를 초기화합니다.
-
-```powershell
-.\.venv\Scripts\python.exe -m scripts.init_faq
-.\.venv\Scripts\python.exe -m scripts.init_logs
-```
-
-FAQ 초기화는 없는 ID만 추가하며, 기존 답변을 덮어쓰지 않습니다. JSON 변경을 기존 DB 행에 자동 반영하는 기능은 없습니다.
-
-### 3. 환경변수
-
-프로젝트 최상위에 `.env`를 만들고 본인의 접속 정보를 작성합니다. 비밀번호는 예시값을 실제 값으로 바꿉니다.
+`.env.example`을 참고해 프로젝트 루트에 `.env`를 만듭니다. 기존 `.env`를 덮어쓰지 마세요.
 
 ```dotenv
 DB_HOST=127.0.0.1
 DB_PORT=3306
 DB_NAME=food_commerce
-DB_USER=root
-DB_PASSWORD='your_local_password'
+DB_USER=your_db_user
+DB_PASSWORD=your_local_password
+GEMINI_API_KEY=your_api_key
+LLM_ENABLED=true
+LLM_QUERY_ENABLED=true
+LLM_FAQ_ENABLED=true
+LLM_MODEL=gemini-3.5-flash-lite
+LLM_FAQ_MODEL=gemini-3.5-flash-lite
 ```
 
-`root`는 현재 로컬 학습 환경에서 사용하는 계정입니다. 프로젝트 전용 최소 권한 계정 분리는 향후 개선 항목입니다.
-`.env`는 Git에 올리지 않고 `.env.example`에만 비밀정보 없는 설정 예시를 보관합니다.
+DB 계정은 본인 로컬 계정으로 설정합니다. 키와 비밀번호는 Git에 올리지 않습니다. 현재 모델 선택은 실제 검증에 사용한 설정이며 사용 가능 여부와 할당량은 계정·시점에 따라 달라질 수 있습니다. `.env` 변경 후 서버를 재시작합니다.
+
+키 없이 구조를 확인하려면 `LLM_ENABLED=false`로 설정합니다. 이 모드에서는 제한된 단순 규칙 검색과 FAQ 원문 조회만 가능하며, 자연어 가격 조건 해석이나 AI 설명은 제공하지 않습니다.
+
+### 3. MySQL 테이블과 가상 데이터
+
+MySQL 서버를 실행하고 Workbench에서 [sql/schema.sql](sql/schema.sql)을 실행합니다. 이 파일은 `food_commerce` DB와 `products` 테이블을 만듭니다. 다른 DB 이름을 쓸 경우 SQL과 `.env`를 함께 맞춰야 합니다.
 
 ```powershell
-git check-ignore .env
+.\.venv\Scripts\python.exe -m scripts.init_products --check-only
+.\.venv\Scripts\python.exe -m scripts.init_products
+.\.venv\Scripts\python.exe -m scripts.init_faq
+.\.venv\Scripts\python.exe -m scripts.init_logs
 ```
 
-`.env`가 출력되는지 확인합니다. `.env`를 변경하면 개발 서버를 재시작합니다.
+상품은 30개, FAQ는 10개입니다. 동일 상품 재입력은 건너뛰며 기존 ID의 내용이 다르면 저장을 중단합니다. FAQ 초기화도 기존 ID를 덮어쓰지 않습니다. 기존 DB에 데이터를 추가하는 초기화이며, 테이블 구조 변경을 처리하는 마이그레이션 도구는 아닙니다.
+
+`sql/seed_products.sql`은 초기 5개 상품 학습 자료입니다. 위 CSV 입력 과정과 함께 실행할 필요가 없습니다.
 
 ### 4. 서버 실행
 
@@ -148,99 +103,102 @@ git check-ignore .env
 
 - 웹 화면: http://127.0.0.1:8000/
 - API 문서: http://127.0.0.1:8000/docs
-- 상품 조회: http://127.0.0.1:8000/api/products
-- 서버 종료: `Ctrl + C`
+- 상품 데이터: http://127.0.0.1:8000/api/products
+- 종료: 서버 터미널에서 `Ctrl+C`
 
-웹 화면에서 질문을 입력하면 JavaScript가 POST 요청을 보냅니다. API 응답 JSON을 직접 확인하려면 `/docs`의 `Try it out`을 사용합니다. 주소창 직접 접속은 GET 요청입니다.
+HTML 파일을 직접 열지 않고 FastAPI 주소로 접속합니다. `/health`는 HTTP 응답 확인용이며 DB·LLM 상태를 검사하지 않습니다.
 
-## FAQ 검색 사용과 테스트
+## 사용 예시
 
-```json
-{"query": "배송비는 얼마인가요?"}
-```
+| 질문 | 정상 해석 시 30개 데이터의 기대 결과 |
+| --- | --- |
+| 선물용인데 너무 달지 않고 개별포장된 상품 추천해줘 | 7개: ID 1·5·12·18·20·26·30 |
+| 가성비 있는 상품을 추천해줘 제일 싼 상품도 포함해서 | 가격 오름차순, 첫 상품 미니 쌀과자 4,500원 |
+| 2만원 이하 상품 중 개별포장은 제외해줘 | 5개: ID 7·9·11·21·23 |
+| FAQ: 배송비 | 생성 성공 시 기본 3,000원·50,000원 이상 무료라는 가상 정책과 faqs:2 출처 |
+| FAQ: 배송 | 동점 근거에 따른 질문 구체화 안내 |
 
-`POST /api/faq/search`에 보내면 `mode: retrieval_only`, `status: matched`와 FAQ 원문 목록을 반환합니다. FAQ 2가 첫 번째이며 `source`는 `faqs:2`입니다. 가상 정책임을 응답에 표시합니다.
+LLM 결과와 외부 API 상태는 실행 시점에 따라 달라질 수 있습니다. [화면 캡처 안내](docs/demo-guide.md)에 시연 순서와 확인할 항목을 정리했습니다. 최신 화면 캡처는 아직 저장하지 않았습니다.
 
-- `배송` → `needs_clarification`: 상위 점수가 같아 질문 구체화 안내
-- `비트코인 가격 알려줘` → `no_match`: 빈 근거 목록
-- 공백 질문 → HTTP 422
-- DB 오류 → HTTP 503 및 서버 오류 로그
+## API
 
-```powershell
-.\.venv\Scripts\python.exe -B -m unittest discover -s tests -v
-```
+| 메서드 | 경로 | 역할 |
+| --- | --- | --- |
+| GET | `/` | 웹 화면 |
+| GET | `/health` | HTTP 상태 확인 |
+| GET | `/hello?name=민수` | 초기 학습용 인사말 |
+| GET | `/api/products` | 활성 상품 조회 |
+| POST | `/api/recommendations` | 조건 해석·상품 검색·추천 이유 |
+| POST | `/api/faq/search` | FAQ 근거 검색·답변·원문 출처 |
 
-테스트는 DB 조회를 대체해 실행하므로 DB 변경이나 LLM 비용이 없습니다. 실제 MySQL·임시 HTTP 서버로도 FAQ 6개 요청과 기존 상품/추천 API를 확인했습니다. 점수는 규칙 기반 우선순위로 정답 확률이 아닙니다.
+POST 본문 예시: `{"query":"2만원 이하 상품 중 개별포장은 제외해줘"}`. 질문은 공백 제거 후 1~500자로 검사합니다. 공백 입력은 HTTP 422, DB 조회 오류는 HTTP 503으로 반환합니다.
 
-파일별 설명과 직접 확인할 내용은 [FAQ 학습 안내](docs/faq-guide.md)를 참고합니다.
+추천 응답에는 `request_id`, `conditions`, `count`, `products`, `interpretation`, `llm`이 포함됩니다. FAQ 응답에는 `mode`, `status`, `answer`, `sources`, `matches`, `llm` 등이 포함됩니다. 생성 성공은 `mode=generated`, 생략·실패는 `retrieval_only`입니다.
 
-## 요청 로그 확인
+## 오류 처리와 로그
 
-추천·FAQ 성공 응답의 `request_id`와 DB 기록을 연결합니다. 오류 응답에서는 `X-Request-ID` 헤더로 확인합니다. FAQ의 `matched`는 로그 상태 `success`로 저장하며 나머지는 `no_match`, `unsupported`, `needs_clarification`, `error`로 구분합니다.
+| 실패 위치 | 처리 |
+| --- | --- |
+| 상품 조건 해석 | 단순한 문장 전체를 인식할 수 있을 때만 규칙 적용. 복잡한 조건은 검색을 멈추고 안내 |
+| 추천 설명 | 이미 조회한 DB 상품을 설명 없이 반환 |
+| FAQ 답변 | 검색된 원문 유지. 모델이 근거 부족을 표시하면 답변 보류 |
+| DB 조회 | 일반화한 503 메시지와 서버 로그, 요청 ID 제공 |
+| 로그 DB 저장 | 콘솔에 오류를 남기고 원래 응답 유지. 영구 저장은 보장하지 않음 |
+
+상품 요청은 조건 해석·이유 생성의 최대 2단계입니다. 각 단계에서 503 재시도 1회를 허용하므로 외부 호출은 최대 4회, FAQ는 최대 2회입니다. 429·인증 오류·잘못된 출력은 재시도하지 않습니다. 브라우저 대기 한도는 상품 120초, FAQ 60초이며 서버 작업 취소를 보장하지 않습니다.
+
+추천·FAQ 엔드포인트에 진입한 요청을 `ai_logs`에 기록합니다. 입력 검증에서 거절된 422 요청과 GET 요청은 DB 로그 범위 밖입니다.
 
 ```sql
-SELECT request_id, feature, engine, user_query, status,
-       http_status, latency_ms, created_at
+SELECT request_id, feature, status, error_code, latency_ms, created_at
 FROM food_commerce.ai_logs
 ORDER BY log_id DESC
 LIMIT 10;
 ```
 
-`created_at`은 UTC입니다. `latency_ms`는 입력 검증 후 함수 시작부터 응답 준비까지이며 로그 쓰기와 네트워크 시간은 제외합니다. 로그 쓰기는 동기 방식이어서 실제 사용자 대기에는 추가 시간이 발생할 수 있습니다.
+`created_at`은 UTC입니다. `latency_ms`는 함수 진입부터 응답 준비까지로 로그 쓰기와 네트워크 시간을 제외합니다. 화면 요청 ID로 DB 기록을 찾을 수 있습니다. 로그에는 질문과 답변이 저장되므로 개인·민감정보를 입력하지 않는 가상 데모로 사용합니다.
 
-실제 DB 저장 6건의 응답/요청 ID/상태를 대조했습니다. 그중 1건은 검색 오류를 모의 주입한 검증 기록입니다. 로그 저장 실패 시 콘솔 fallback은 영구 저장을 보장하지 않습니다.
+## 검증과 문제 해결
 
-[요청 로그 학습 안내](docs/request-logs-guide.md)에 파일 역할, 실행 방법, 실패 처리와 완료 조건을 정리했습니다.
-
-## 문제 해결과 확인
-
-상품 기능의 개발자 수동 확인 결과와 9/28의 실제 DB·HTTP 검증을 기록했습니다. FAQ·추천 회귀·요청 로그 자동 테스트 45개가 통과했습니다. 실제 LLM 성공 및 503 대체 응답과 DB 기록을 확인했습니다. 10/2 기록의 시간과 토큰 수는 단일 요청 관측입니다.
-
-| 문제 | 개선 | 확인 결과 |
+| 검증 | 기록된 결과 | 범위 |
 | --- | --- | --- |
-| 공백 질문이 길이 검사 통과 | 공백 제거 후 길이 검사 | 같은 입력의 응답이 200 → 422 |
-| 인식한 조건이 없으면 전체 상품 반환 | 조건이 없으면 검색 중단 및 안내 | 매운맛 질문의 반환 상품 수 5 → 0 |
-| Python 리스트 변경에 의존 | MySQL 조회로 검색 교체 | 활성 상태 변경에 따라 결과가 `[1, 5]` → `[1]` → `[]`, 복구 후 `[1, 5]` |
+| 자동 테스트 | 60개 통과 | 외부 API와 DB를 모의 처리한 로직·예외 검증 |
+| 실제 MySQL 검색 | 15/15 통과 | 고정 조건의 상품 ID·정렬 순서 |
+| 실제 자연어 HTTP 요청 | 3/3 통과 | 실제 LLM·DB·요청 로그 포함, 고정 질문 단일 실행 |
 
-## 한계와 다음 작업
+```powershell
+.\.venv\Scripts\python.exe -B -m unittest discover -s tests -q
+.\.venv\Scripts\python.exe -m scripts.evaluate_products
+# 실행 중인 서버로 실제 AI 요청 3개를 보내며 API 할당량을 사용합니다.
+.\.venv\Scripts\python.exe -m scripts.evaluate_products --live
+```
 
-- Gemini로 가격·포장 제외 등의 조건을 해석합니다. 미지원 조건 감지 시 검색을 중단하지만 자연어 의미 해석의 완전한 정확성은 보장하지 않습니다.
-- 낮은 당도는 가상 등급 2 이하라는 고정 규칙이며 영양성분이나 건강 적합성 판단이 아닙니다.
-- 검색은 활성 상품을 ID 또는 가격 순으로 반환합니다. 이유 생성은 정렬된 앞 3개만 사용하며 개인화 순위는 없습니다.
-- 상품 5개와 공통 FAQ 10개를 사용하며 요청 로그를 저장합니다. 상품·FAQ 검색 웹 화면을 제공합니다.
-- FAQ는 키워드 검색이며 부정문·복합 질문에서 오탐할 수 있습니다. 상품 전용 FAQ는 현재 검색에서 제외합니다.
-- 상품 추천 LLM 연동과 후보 ID 검증을 구현했습니다. FAQ LLM 연동은 다음 단계입니다. 아직 LLM 추천 정확도나 토큰 절감 효과를 주장하지 않습니다.
-- SQL과 의존성 목록은 정리됐습니다. FAQ의 DB 오류 응답은 모의 예외로 검사했으며 실제 장애 재현과 새 환경 전체 설치 검증은 남아 있습니다.
-- 이후 고정 평가 질문으로 응답 시간, 입력 토큰, 조건 위반률을 비교할 계획입니다.
+실제 DB 평가는 제공 CSV와 동일한 30개 상품을 전제로 합니다. 위 결과는 일반 자연어 정확도 100%를 의미하지 않습니다.
 
-## 개발 기록
+실제 검증에서 API 503/시간 초과와 “추천”을 미지원 조건으로 분류하는 문제를 구분했습니다. 모델 비교 후 프롬프트에 요청 동사와 상품 조건의 구분을 추가했고, 같은 모델의 고정 질문 검증이 2/3에서 3/3으로 바뀌었습니다. 실패 원본을 포함한 [문제 해결 기록](docs/evaluation/product-validation.md)을 공개합니다. 개발에 사용한 질문을 재검증한 결과이며 별도 평가셋의 정확도나 속도 개선률로 주장하지 않습니다.
 
-[날짜별 기록 목차](docs/development_log.md) · [9/21: MySQL 검색](docs/devlog/2026-09-21.md) · [9/28: FAQ 검색](docs/devlog/2026-09-28.md)
+## 파일 구조
 
+```text
+app/             # FastAPI, DB 접근, 조건 해석, LLM 호출, FAQ 검색, 로그
+scripts/         # 데이터 초기화, 연결 확인, 고정 평가
+data/            # products.csv / faqs.json (모두 가상 데이터)
+sql/             # products / faqs / ai_logs 테이블 정의
+templates/       # HTML 화면
+static/          # CSS / JavaScript
+tests/           # 자동 테스트
+docs/            # ERD, 구조도, 학습 안내, 검증 결과, 개발 기록
+.env.example     # 비밀정보 없는 환경변수 예시
+requirements.txt # 검증 환경의 고정 패키지 버전
+```
 
-## 웹 화면 사용
+[상품 데이터 안내](docs/product-data-guide.md) · [자연어 검색 안내](docs/natural-language-search-guide.md) · [FAQ AI 안내](docs/faq-ai-guide.md) · [로그 안내](docs/request-logs-guide.md) · [개발 기록](docs/development_log.md)
 
-1. 서버 실행 후 http://127.0.0.1:8000/ 에 접속합니다. HTML 파일을 직접 열지 않습니다.
-2. **상품 찾기 → 담백한 선물 → 조건에 맞는 상품 찾기**를 누릅니다. 초기 데이터에서는 상품 1, 5가 표시됩니다.
-3. **궁금한 점 → 배송비 → 관련 FAQ 찾기**로 FAQ 원문과 출처를 확인합니다.
-4. 공백 입력은 화면에서 차단합니다. 관련 없는 FAQ 질문은 근거 없음으로 표시합니다.
+## 한계와 향후 개선
 
-흐름: 입력 → JavaScript `fetch`로 질문 JSON 전송 → FastAPI → MySQL 검색 및 요청 로그 → 응답 JSON → 상품/FAQ 카드. DB 비밀번호는 서버에만 두며 브라우저에 전달하지 않습니다.
-
-[웹 화면 학습 안내](docs/web-ui-guide.md) · [9/29 개발 기록](docs/devlog/2026-09-29.md)
-
-
-## Gemini 상품 추천 실행
-
-`.env`에 `GEMINI_API_KEY`를 저장하고 서버를 재시작합니다. 기본 모델은 `gemini-3.8-flash`이며 `LLM_MODEL`로 변경합니다. `LLM_ENABLED=false`이면 AI 호출을 끕니다. 키는 브라우저에 전달하지 않습니다.
-
-먼저 질문만으로 조건을 해석하고, 검색 결과가 있으면 정렬된 앞 3개의 후보와 질문으로 이유를 생성합니다(최대 2회 호출). 실패하면 AI 설명 없이 기존 상품을 표시합니다. 자세한 파일 역할·실행·검증·오류 확인은 [상품 추천 LLM 안내](docs/llm-recommendation-guide.md)를 참고하세요.
-
-[10/2: 실연동 및 오류 대체 기록](docs/devlog/2026-10-02.md)
-
-
-## 자연어 가격 검색
-
-`가성비 있는 상품을 추천해줘 제일 싼 상품도 포함해서`를 가격 낮은 순으로 처리합니다. 가성비는 중량·품질 비교가 아닌 판매가격 기준입니다. `2만원 이하`, `개별포장 제외`도 지원하며, 해석한 조건을 화면에 표시합니다. 미지원·모호한 조건은 검색 대신 안내합니다.
-
-[파일 역할·실행·오류·검증 안내](docs/natural-language-search-guide.md). `.env`의 `LLM_QUERY_ENABLED=false`로 해석만 끌 수 있습니다. 현재 FAQ는 여전히 원문 검색입니다.
+- 가상 데이터 기반 로컬 MVP로 실제 매출·고객 만족도·대규모 트래픽 개선 효과는 측정하지 않았습니다.
+- 카테고리·보관방법·중량·알레르기·배송 조건은 현재 상품 자연어 필터가 지원하지 않습니다.
+- FAQ 검색은 키워드 기반이며 부정문·복합 질문에서 오탐할 수 있습니다. 상품별 FAQ 컬럼은 있지만 현재 공통 FAQ만 사용합니다.
+- 상품·출처 ID 검사만으로 생성 문장의 사실성을 완전히 보장할 수 없습니다.
+- 외부 API 장애, 할당량, 모델 변경에 영향을 받습니다. 인증·접속 제한·로그 보존 정책 등 실제 운영 요건은 추가 설계가 필요합니다.
+- 향후 별도 평가 질문 확장, FAQ 검색 개선, 반복 측정과 설명 문장 검토를 진행할 수 있습니다. 리뷰 분석은 이번 MVP에 포함하지 않았습니다.

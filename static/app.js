@@ -13,7 +13,7 @@ const modes = {
     description: "배송·보관·주문 등 등록된 안내를 찾아보세요.",
     label: "궁금한 내용", button: "관련 FAQ 찾기",
     placeholder: "배송비는 얼마인가요?",
-    note: "FAQ 원문을 그대로 보여드립니다. 키워드 검색은 질문의 의미를 놓칠 수 있으니 출처와 내용을 확인해 주세요.",
+    note: "관련 FAQ를 근거로 AI가 답변합니다. 근거가 부족하면 안내하고, 생성 실패 시 원문을 보여드립니다. 출처도 함께 확인해 주세요.",
     examples: [["배송비", "배송비는 얼마인가요?"], ["해동 방법", "냉동 떡 해동 방법 알려줘"], ["주문 취소", "주문을 취소하고 싶어요"]],
   },
 };
@@ -156,7 +156,7 @@ function renderProducts(data) {
 
 function renderFaq(data) {
   const matches = data.matches || [];
-  const titles = { matched: "관련된 안내를 찾았어요", needs_clarification: "어떤 내용이 궁금하신가요?", no_match: "아직 등록된 안내가 없어요" };
+  const titles = { matched: "관련된 안내를 찾았어요", needs_clarification: "어떤 내용이 궁금하신가요?", no_match: "아직 등록된 안내가 없어요", insufficient_evidence: "질문에 답할 근거가 부족해요" };
   $("results-title").textContent = titles[data.status] || "FAQ 검색 결과";
   $("result-count").textContent = `${matches.length} SOURCES`;
   $("result-status").textContent = data.message;
@@ -165,10 +165,38 @@ function renderFaq(data) {
     return;
   }
   const list = element("div", "faq-list");
+  if (data.mode === "generated" && data.answer) {
+    const answer = element("article", "faq-card recommendation-reason");
+    answer.append(element("h3", "", "AI FAQ 답변"), element("p", "faq-answer", data.answer));
+    const sources = element("div", "faq-meta");
+    sources.append(element("span", "", "답변 출처: "));
+    for (const source of data.sources || []) {
+      const faq = matches.find(item => item.source === source);
+      if (!faq) continue;
+      const link = element("a", "faq-source faq-source-link", `원문 보기 · ${source}`);
+      link.href = `#faq-${faq.faq_id}`;
+      link.addEventListener("click", (event) => {
+        const target = document.getElementById(`faq-${faq.faq_id}`);
+        if (!target) return;
+        event.preventDefault();
+        // 이미 화면 안에 있는 원문도 선택됐음을 알 수 있게 강조하고 초점을 옮긴다.
+        list.querySelectorAll(".source-selected").forEach(node => node.classList.remove("source-selected"));
+        target.classList.add("source-selected");
+        target.focus({preventScroll: true});
+        target.scrollIntoView({behavior: "auto", block: "center"});
+      });
+      sources.append(link);
+    }
+    answer.append(sources);
+    list.append(answer);
+  }
+  if (data.notice) list.append(element("p", "muted", data.notice));
   for (const faq of matches) {
     const card = element("article", "faq-card");
+    card.id = `faq-${faq.faq_id}`;
+    card.tabIndex = -1;
     const meta = element("div", "faq-meta");
-    meta.append(element("span", "faq-category", faq.category), element("span", "faq-source", `출처 ${faq.source}`));
+    meta.append(element("span", "faq-category", faq.category), element("span", "faq-source", `FAQ 원문 · ${faq.source}`));
     card.append(meta, element("h3", "", faq.question), element("p", "faq-answer", faq.answer));
     list.append(card);
   }
@@ -207,7 +235,7 @@ form.addEventListener("submit", async (event) => {
   const controller = new AbortController();
   // 브라우저 대기만 중단한다. 서버에서 시작된 처리/로그 저장이 취소되는 것은 아니다.
   // 조건 해석과 이유 생성의 순차 호출을 기다린다. 서버의 작업 취소는 아니다.
-  const timeout = setTimeout(() => controller.abort(), 60000);
+  const timeout = setTimeout(() => controller.abort(), currentMode === "faq" ? 60000 : 120000);
   try {
     const response = await fetch(modes[currentMode].endpoint, {
       method: "POST", headers: {"Content-Type": "application/json"},

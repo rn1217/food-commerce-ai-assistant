@@ -58,7 +58,7 @@ def add_recommendation_reasons(query: str, products: list[dict], request_id: str
     started = perf_counter()
     try:
         result = generate_text(prompt)
-        meta.update(model=result['model'], usage=result['usage'])
+        meta.update(model=result['model'], usage=result['usage'], attempts=result.get('attempts', 1))
         reasons = validate_reasons(result['text'], candidates)
         # 상품 이름·가격 등을 모델 출력으로 덮어쓰지 않는다.
         enriched = [{**p, 'recommendation_reason': reasons.get(p['product_id'])} for p in products]
@@ -67,7 +67,7 @@ def add_recommendation_reasons(query: str, products: list[dict], request_id: str
     except Exception as exc:
         # 설명 기능의 예기치 않은 오류도 검색 결과를 가리지 않도록 경계에서 처리한다.
         code = str(exc) if isinstance(exc, LLMError) else 'invalid_output' if isinstance(exc, ValueError) else 'internal_error'
-        meta.update(status='fallback', error_code=code)
+        meta.update(status='fallback', error_code=code, attempts=getattr(exc, 'attempts', 1))
         logger.warning('llm_fallback request_id=%s code=%s type=%s', request_id, code, type(exc).__name__)
         return products, meta
     finally:

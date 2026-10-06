@@ -14,6 +14,7 @@ from app.query_service import interpret_query
 from app.faq_service import search_faqs
 from app.log_service import record_request
 from app.llm_recommendation_service import add_recommendation_reasons
+from app.llm_faq_service import add_faq_answer
 
 
 app = FastAPI(title="Food Commerce AI Assistant")
@@ -145,12 +146,17 @@ def find_faq(request: FaqSearchRequest):
     request_id = str(uuid4())
     status, http_status, error_code = "error", 500, None
     response = {"detail": "FAQ 요청 처리 중 오류가 발생했습니다."}
+    engine = "rule"
 
     try:
         response = search_faqs(request.query)
+        response = add_faq_answer(request.query, response, request_id)
+        engine = response["llm"]["engine"]
         response["request_id"] = request_id
         # API의 matched는 로그에서는 공통 상태 success로 저장한다.
         status = "success" if response["status"] == "matched" else response["status"]
+        if response["llm"]["status"] == "fallback":
+            status, error_code = "fallback", response["llm"]["error_code"]
         http_status = 200
         return response
     except pymysql.MySQLError as exc:
@@ -168,4 +174,5 @@ def find_faq(request: FaqSearchRequest):
             request_id=request_id, feature="faq", query=request.query,
             response=response, started_at=started_at, status=status,
             http_status=http_status, error_code=error_code,
+            engine=engine,
         )

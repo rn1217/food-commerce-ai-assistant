@@ -1,6 +1,8 @@
 """Gemini HTTP 호출만 담당한다. API 키나 원본 오류는 로그에 남기지 않는다."""
 import json
 import os
+import logging
+from time import sleep
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -8,15 +10,32 @@ from urllib.request import Request, urlopen
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parents[1] / '.env')
+logger = logging.getLogger('uvicorn.error')
 
 
 class LLMError(Exception):
     """외부로 전달해도 안전한 오류 코드만 보관한다."""
+    attempts = 1
 
 
-def generate_text(prompt: str) -> dict:
+def generate_text(prompt: str, model: str | None = None) -> dict:
+    # 서비스 이용 불가(503)에만 재시도 1회. 429·인증·출력 오류는 반복하지 않는다.
+    for attempt in (1, 2):
+        try:
+            result = _generate_once(prompt, model=model)
+            result['attempts'] = attempt
+            return result
+        except LLMError as exc:
+            exc.attempts = attempt
+            if str(exc) != 'http_503' or attempt == 2:
+                raise
+            logger.warning('llm_retry code=http_503 next_attempt=2')
+            sleep(1)
+
+
+def _generate_once(prompt: str, model: str | None = None) -> dict:
     key = os.getenv('GEMINI_API_KEY', '').strip()
-    model = os.getenv('LLM_MODEL', '').strip() or 'gemini-3.8-flash'
+    model = model or os.getenv('LLM_MODEL', '').strip() or 'gemini-3.8-flash'
     if not key:
         raise LLMError('missing_key')
     request = Request(
@@ -26,7 +45,7 @@ def generate_text(prompt: str) -> dict:
         method='POST',
     )
     try:
-        # 자동 재시도 없음. 20초는 소켓 대기 제한이며 전체 요청의 절대 제한은 아니다.
+        # 20초는 1회 호출의 소켓 대기 제한이며 전체 요청의 절대 제한은 아니다.
         with urlopen(request, timeout=20) as response:
             raw = response.read(262145)
         if len(raw) > 262144:
@@ -49,7 +68,9 @@ def generate_text(prompt: str) -> dict:
             ('total_input_tokens', 'total_output_tokens', 'total_tokens')
         }}
     except HTTPError as exc:
-        raise LLMError(f'http_{exc.code}') from None
+        code = exc.code
+        exc.close()
+        raise LLMError(f'http_{code}') from None
     except (TimeoutError, URLError, OSError):
         raise LLMError('network_or_timeout') from None
     except (ValueError, TypeError, AttributeError, KeyError):

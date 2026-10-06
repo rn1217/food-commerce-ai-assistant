@@ -667,3 +667,8 @@ textarea[aria-invalid=true] {
 .recommendation-reason { margin-top:18px; padding:14px; border-radius:10px; background:#f0f4ea; font-size:13px; line-height:1.7; overflow-wrap:anywhere; }
 .recommendation-reason strong { color:#294f40; }
 .recommendation-reason p { margin:6px 0 0; }
+
+.faq-source-link { display:inline-block; padding:6px 10px; border:1px solid #527562; border-radius:6px; color:#234e3e; text-decoration:underline; cursor:pointer; }
+.faq-source-link:hover, .faq-source-link:focus-visible { background:#e5eddd; outline:2px solid #527562; outline-offset:2px; }
+.faq-card.source-selected { outline:3px solid #527562; outline-offset:3px; background:#f3f7ed; }
+.faq-card { scroll-margin-block:24px; }

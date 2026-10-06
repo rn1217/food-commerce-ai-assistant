@@ -99,6 +99,11 @@ def interpret_query(query: str, request_id: str):
         '비싼 순은 price_desc. 명시 없는 정렬은 default. '
         '지원하지 않는 요구(카테고리, 맛, 중량, 건강/알레르기, 배송 등)는 unsupported에 빠짐없이 적고 '
         '지원 여부나 상충 조건이 모호하면 needs_clarification=true. '
+        '추천해줘/찾아줘/알려줘 같은 요청 동사는 상품 조건이 아니므로 unsupported에 넣지 마라. '
+        '상품/제품이라는 일반 명칭도 미지원 조건이 아니다. '
+        '최소 또는 최대 가격이 명시되지 않았다면 해당 값은 0이 아니라 null이다. '
+        '예: 선물용인데 너무 달지 않고 개별포장된 상품 추천해줘는 '
+        'gift_only=true, individual_only=true, max_sweetness=2, unsupported=[]이다. '
         '예: 매운 선물은 gift_only=true이면서 unsupported=["매운맛"]. '
         '인사/관련 없는 질문/조건 없는 추천은 needs_clarification=true. '
         '아래 스키마의 모든 필드를 포함한 JSON만 출력하고 코드 블록을 쓰지 마라.\n'
@@ -109,13 +114,13 @@ def interpret_query(query: str, request_id: str):
     meta['engine'] = 'gemini'
     try:
         result = generate_text(prompt)
-        meta.update(model=result['model'], usage=result['usage'])
+        meta.update(model=result['model'], usage=result['usage'], attempts=result.get('attempts', 1))
         intent = SearchIntent.model_validate_json(result['text'])
         meta['status'] = 'success'
         return intent, meta
     except Exception as exc:
         code = str(exc) if isinstance(exc, LLMError) else 'invalid_output' if isinstance(exc, ValueError) else 'internal_error'
-        meta.update(status='fallback', error_code=code)
+        meta.update(status='fallback', error_code=code, attempts=getattr(exc, 'attempts', 1))
         logger.warning('query_fallback request_id=%s code=%s type=%s', request_id, code, type(exc).__name__)
         return safe_rule_intent(query), meta
     finally:

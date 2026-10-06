@@ -16,3 +16,8 @@ starlette==1.6.0
 typing-inspection==0.4.4
 typing_extensions==4.16.0
 uvicorn==0.53.0
+pandas==3.0.6
+numpy==2.5.3
+python-dateutil==2.9.0.post0
+six==1.17.0
+tzdata==2026.5

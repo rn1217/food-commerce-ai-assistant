@@ -1,0 +1,58 @@
+{
+  "environment": "new venv / Python 3.14.7 / existing local MySQL / LLM_ENABLED=false",
+  "checks": [
+    {
+      "route": "/",
+      "status": 200,
+      "passed": true
+    },
+    {
+      "route": "/health",
+      "status": 200,
+      "passed": true
+    },
+    {
+      "route": "/api/products",
+      "status": 200,
+      "passed": true
+    },
+    {
+      "route": "/static/app.js",
+      "status": 200,
+      "passed": true
+    },
+    {
+      "route": "/static/style.css",
+      "status": 200,
+      "passed": true
+    },
+    {
+      "route": "/api/recommendations",
+      "query": "너무 달지 않은 개별포장 선물",
+      "status": 200,
+      "passed": true,
+      "log_matches": true
+    },
+    {
+      "route": "/api/faq/search",
+      "query": "배송비",
+      "status": 200,
+      "passed": true,
+      "log_matches": true
+    },
+    {
+      "route": "/api/faq/search",
+      "query": "비트코인 가격 알려줘",
+      "status": 200,
+      "passed": true,
+      "log_matches": true
+    },
+    {
+      "route": "/api/recommendations",
+      "query": "   ",
+      "status": 422,
+      "passed": true,
+      "log_matches": null
+    }
+  ]
+}

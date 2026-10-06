@@ -115,19 +115,44 @@ class ClientTests(unittest.TestCase):
 
     def test_errors_safe_and_no_retries(self):
         for exc, code in [(TimeoutError('private'), 'network_or_timeout'),
-                          (HTTPError('url', 429, 'private', None, None), 'http_429'),
-                          (HTTPError('url', 503, 'private', None, None), 'http_503')]:
+                          (HTTPError('url', 429, 'private', None, None), 'http_429')]:
             with self.subTest(code=code), patch('app.llm_client.urlopen', side_effect=exc) as send:
                 with self.assertRaises(LLMError) as caught:
                     generate_text('테스트')
                 self.assertEqual(str(caught.exception), code)
                 send.assert_called_once()
 
+    def test_503_retries_once_then_recovers(self):
+        data = {'status': 'completed', 'steps': [{'type': 'model_output', 'content': [{'type': 'text', 'text': 'OK'}]}]}
+        responses = [HTTPError('url', 503, 'private', None, None), io.BytesIO(json.dumps(data).encode())]
+        with patch('app.llm_client.urlopen', side_effect=responses) as send, patch('app.llm_client.sleep') as wait:
+            with self.assertLogs('uvicorn.error', level='WARNING'):
+                result = generate_text('test')
+        self.assertEqual(result['attempts'], 2)
+        self.assertEqual(send.call_count, 2)
+        wait.assert_called_once_with(1)
+
+    def test_persistent_503_stops_after_two_attempts(self):
+        with patch('app.llm_client.urlopen', side_effect=HTTPError('url', 503, 'private', None, None)) as send, patch('app.llm_client.sleep'):
+            with self.assertLogs('uvicorn.error', level='WARNING'), self.assertRaises(LLMError) as caught:
+                generate_text('test')
+        self.assertEqual(send.call_count, 2)
+        self.assertEqual(caught.exception.attempts, 2)
+        self.assertEqual(str(caught.exception), 'http_503')
+
     def test_missing_key_does_not_send(self):
         with patch.dict(os.environ, {'GEMINI_API_KEY': ''}), patch('app.llm_client.urlopen') as send:
             with self.assertRaisesRegex(LLMError, 'missing_key'):
                 generate_text('테스트')
         send.assert_not_called()
+
+    def test_model_override_keeps_global_setting(self):
+        data = {'status':'completed','steps':[{'type':'model_output','content':[{'type':'text','text':'OK'}]}]}
+        with patch('app.llm_client.urlopen', return_value=io.BytesIO(json.dumps(data).encode())) as send:
+            output = generate_text('test', model='faq-test-model')
+        self.assertEqual(json.loads(send.call_args.args[0].data)['model'], 'faq-test-model')
+        self.assertEqual(output['model'], 'faq-test-model')
+        self.assertEqual(os.environ['LLM_MODEL'], 'test-model')
 
     def test_invalid_or_incomplete_response(self):
         for raw in (b'bad-json', b'[]', b'{"status":"in_progress"}', b'{"status":"completed","steps":[]}'):
