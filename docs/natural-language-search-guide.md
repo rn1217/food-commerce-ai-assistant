@@ -12,7 +12,7 @@
 
 ## 파일 역할
 
-- `app/query_service.py`: 허용된 조건 스키마, 해석 프롬프트, 값·범위·상충 조건 검증. AI 오류 시 단순한 문장만 기존 규칙으로 처리한다.
+- `app/query_service.py`: 허용된 조건 스키마, 해석 프롬프트, 값·범위·상충 조건 검증. AI 오류 시 단순한 문장만 기존 규칙으로 처리한다. 2026-11-17부터 프롬프트를 v1/v2로 관리하며(`LLM_QUERY_PROMPT_VERSION`, 기본 v2), v2는 포장 조건을 `packaging`(any/individual/bulk) 하나로 받아 내부 `SearchIntent`로 변환한다. 근거는 [자연어 검색 평가](evaluation/nl-eval-report.md).
 - `app/product_repository.py`: 최소/최대 가격, 개별포장 제외, 가격순 정렬. 값은 %s 바인딩, 정렬 구문은 고정 허용 목록에서 선택한다.
 - `app/main.py`: 해석 → 검색 → 이유 생성 연결. unsupported/needs_clarification이면 부분 검색을 하지 않는다.
 - `static/app.js`: 가격·포장·정렬 조건을 태그로 표시. 예시 질문 및 60초 브라우저 대기 제한.

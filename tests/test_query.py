@@ -4,32 +4,52 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from app.llm_client import LLMError
-from app.query_service import SearchIntent, empty_intent, interpret_query, safe_rule_intent
+from app.query_service import (SearchIntent, build_prompt_v2, empty_intent, interpret_query,
+                               prompt_version, safe_rule_intent)
 from app.product_repository import search_products
 from test_faq import request_api
 
 
-def model_reply(**changes):
+def intent_json(**changes):
+    # 서비스 내부 SearchIntent 형식(v1 LLM 출력 형식과 같음)
     values = empty_intent().model_dump()
     values.update(changes)
-    return {'text': json.dumps(values), 'model': 'test', 'usage': {'total_tokens': 50}}
+    return json.dumps(values)
+
+
+def v2_values(**changes):
+    values = {'gift_only': False, 'packaging': 'any', 'max_sweetness': None, 'min_price': None,
+              'max_price': None, 'sort': 'default', 'include_cheapest': False,
+              'value_requested': False, 'needs_clarification': False, 'unsupported': []}
+    values.update(changes)
+    return values
+
+
+def model_reply(**changes):
+    # 기본 프롬프트(v2)의 LLM 출력 형식
+    return {'text': json.dumps(v2_values(**changes)), 'model': 'test', 'usage': {'total_tokens': 50}}
+
+
+def raw_reply(text):
+    return {'text': text, 'model': 'test', 'usage': {'total_tokens': 50}}
 
 
 class IntentTests(unittest.TestCase):
     def setUp(self):
-        self.env = patch.dict(os.environ, {'LLM_ENABLED': 'true', 'LLM_QUERY_ENABLED': 'true'})
+        self.env = patch.dict(os.environ, {'LLM_ENABLED': 'true', 'LLM_QUERY_ENABLED': 'true',
+                                           'LLM_QUERY_PROMPT_VERSION': 'v2'})
         self.env.start()
         self.addCleanup(self.env.stop)
 
     def test_cheapest_and_value_force_price_ascending(self):
         for field in ('include_cheapest', 'value_requested'):
             with self.subTest(field=field):
-                intent = SearchIntent.model_validate_json(model_reply(**{field: True})['text'])
+                intent = SearchIntent.model_validate_json(intent_json(**{field: True}))
                 self.assertEqual(intent.sort, 'price_asc')
                 self.assertTrue(intent.has_condition())
 
     def test_price_range_and_exclusion_reach_sql_arguments(self):
-        with patch('app.query_service.generate_text', return_value=model_reply(min_price=10000, max_price=20000, exclude_individual=True)):
+        with patch('app.query_service.generate_text', return_value=model_reply(min_price=10000, max_price=20000, packaging='bulk')):
             intent, meta = interpret_query('1만원부터 2만원까지 개별포장 제외', 'id')
         self.assertEqual(meta['status'], 'success')
         self.assertEqual(intent.search_arguments(), dict(gift_only=False, individual_only=False, max_sweetness=None,
@@ -42,9 +62,54 @@ class IntentTests(unittest.TestCase):
                  dict(unsupported=['x'*101])]
         for changes in cases:
             with self.subTest(changes=changes), self.assertRaises(ValueError):
-                SearchIntent.model_validate_json(model_reply(**changes)['text'])
+                SearchIntent.model_validate_json(intent_json(**changes))
         with self.assertRaises(ValueError):
             SearchIntent.model_validate_json('{}')
+
+    def test_v2_packaging_value_maps_to_existing_search_arguments(self):
+        expected = {'individual': (True, False), 'bulk': (False, True), 'any': (False, False)}
+        for packaging, (only, exclude) in expected.items():
+            with self.subTest(packaging=packaging):
+                with patch('app.query_service.generate_text', return_value=model_reply(packaging=packaging)):
+                    intent, meta = interpret_query('포장 조건', 'id')
+                self.assertEqual((intent.individual_only, intent.exclude_individual), (only, exclude))
+                self.assertEqual((meta['status'], meta['prompt_version']), ('success', 'v2'))
+
+    def test_v2_rejects_two_boolean_packaging_and_records_reason(self):
+        # v1 형식(포함+제외 동시 true)은 v2 스키마에서 형식 오류이며, 원인과 원본 일부를 남긴다.
+        old_shape = intent_json(individual_only=True, exclude_individual=True)
+        with patch('app.query_service.generate_text', return_value=raw_reply(old_shape)):
+            with self.assertLogs('uvicorn.error', level='WARNING') as logs:
+                intent, meta = interpret_query('개별포장 아닌 상품', 'id')
+        self.assertEqual((meta['status'], meta['error_code']), ('fallback', 'invalid_output'))
+        self.assertTrue(meta['invalid_detail'])
+        self.assertEqual(meta['raw_output_preview'], old_shape[:300])
+        self.assertTrue(any('query_invalid_output' in line for line in logs.output))
+        self.assertFalse(intent.has_condition())
+
+    def test_v1_keeps_original_schema_and_names_packaging_conflict(self):
+        with patch.dict(os.environ, {'LLM_QUERY_PROMPT_VERSION': 'v1'}):
+            with patch('app.query_service.generate_text', return_value=raw_reply(intent_json(individual_only=True))) as send:
+                intent, meta = interpret_query('개별포장 상품', 'id')
+            self.assertTrue(intent.individual_only)
+            self.assertEqual(meta['prompt_version'], 'v1')
+            self.assertIn('exclude_individual', send.call_args.args[0])
+            conflict = intent_json(individual_only=True, exclude_individual=True)
+            with patch('app.query_service.generate_text', return_value=raw_reply(conflict)):
+                with self.assertLogs('uvicorn.error', level='WARNING'):
+                    _, meta = interpret_query('개별포장 아닌 상품', 'id')
+        self.assertEqual(meta['error_code'], 'invalid_output')
+        self.assertIn('conflicting_packaging', meta['invalid_detail'])
+
+    def test_prompt_version_default_and_v2_prompt_rules(self):
+        with patch.dict(os.environ, {'LLM_QUERY_PROMPT_VERSION': 'v9'}):
+            self.assertEqual(prompt_version(), 'v2')
+        prompt = build_prompt_v2('부모님 선물')
+        self.assertIn('받는 사람', prompt)
+        self.assertIn('"packaging"', prompt)
+        self.assertNotIn('individual_only', prompt)
+        self.assertNotIn('"description"', prompt)
+        self.assertTrue(prompt.endswith('질문 데이터: "부모님 선물"'))
 
     def test_error_does_not_drop_unrecognized_conditions(self):
         with patch('app.query_service.generate_text', side_effect=LLMError('http_503')):
@@ -66,7 +131,8 @@ class IntentTests(unittest.TestCase):
 
 class QueryApiTests(unittest.TestCase):
     def setUp(self):
-        patch.dict(os.environ, {'LLM_ENABLED': 'true', 'LLM_QUERY_ENABLED': 'true'}).start()
+        patch.dict(os.environ, {'LLM_ENABLED': 'true', 'LLM_QUERY_ENABLED': 'true',
+                                'LLM_QUERY_PROMPT_VERSION': 'v2'}).start()
         self.writer = patch('app.log_service.insert_request_log').start()
         self.generate = patch('app.query_service.generate_text').start()
         self.search = patch('app.main.search_products', return_value=[]).start()

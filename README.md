@@ -4,7 +4,7 @@
 
 개인 학습·포트폴리오 프로젝트이며 가상 상품 30개와 가상 FAQ 10개를 사용합니다. 상품 조건 검색, Gemini 추천 설명, FAQ 답변, 요청 로그와 HTML/CSS/JavaScript 화면을 구현했습니다. 배포 및 실제 고객 운영은 범위에 포함하지 않습니다.
 
-[시스템 구조](docs/architecture.md) · [ERD](docs/erd.md) · [검증·문제 해결](docs/evaluation/product-validation.md) · [프로젝트 설명](docs/project-summary.md) · [제출 전 확인](docs/release-checklist.md)
+[시스템 구조](docs/architecture.md) · [ERD](docs/erd.md) · [자연어 검색 평가](docs/evaluation/nl-eval-report.md) · [검증·문제 해결](docs/evaluation/product-validation.md) · [프로젝트 설명](docs/project-summary.md) · [제출 전 확인](docs/release-checklist.md)
 
 ## 해결하려는 문제
 
@@ -51,6 +51,8 @@ flowchart LR
 
 ### 1. Python 환경과 패키지
 
+Python 3.12 이상이 필요합니다(`numpy==2.5.3`이 3.12 이상만 지원). 3.11 이하로 만든 가상환경에서는 numpy 설치가 실패합니다. 여러 버전이 설치돼 있다면 `py -0`으로 확인하고 `py -3.12 -m venv .venv`처럼 버전을 지정합니다.
+
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
@@ -71,6 +73,7 @@ DB_PASSWORD=your_local_password
 GEMINI_API_KEY=your_api_key
 LLM_ENABLED=true
 LLM_QUERY_ENABLED=true
+LLM_QUERY_PROMPT_VERSION=v2
 LLM_FAQ_ENABLED=true
 LLM_MODEL=gemini-3.5-flash-lite
 LLM_FAQ_MODEL=gemini-3.5-flash-lite
@@ -139,7 +142,7 @@ POST 본문 예시: `{"query":"2만원 이하 상품 중 개별포장은 제외�
 
 | 실패 위치 | 처리 |
 | --- | --- |
-| 상품 조건 해석 | 단순한 문장 전체를 인식할 수 있을 때만 규칙 적용. 복잡한 조건은 검색을 멈추고 안내 |
+| 상품 조건 해석 | 단순한 문장 전체를 인식할 수 있을 때만 규칙 적용. 복잡한 조건은 검색을 멈추고 안내. 형식 오류는 검증 실패 이유와 원본 앞 300자를 `interpretation`에 기록 |
 | 추천 설명 | 이미 조회한 DB 상품을 설명 없이 반환 |
 | FAQ 답변 | 검색된 원문 유지. 모델이 근거 부족을 표시하면 답변 보류 |
 | DB 조회 | 일반화한 503 메시지와 서버 로그, 요청 ID 제공 |
@@ -162,27 +165,45 @@ LIMIT 10;
 
 | 검증 | 기록된 결과 | 범위 |
 | --- | --- | --- |
-| 자동 테스트 | 60개 통과 | 외부 API와 DB를 모의 처리한 로직·예외 검증 |
+| 자동 테스트 | 66개 통과 | 외부 API와 DB를 모의 처리한 로직·예외 검증, 평가셋 형식 검사 |
 | 실제 MySQL 검색 | 15/15 통과 | 고정 조건의 상품 ID·정렬 순서 |
-| 실제 자연어 HTTP 요청 | 3/3 통과 | 실제 LLM·DB·요청 로그 포함, 고정 질문 단일 실행 |
+| 실제 자연어 HTTP 요청 | 3/3 통과 | 실제 LLM·DB·요청 로그 포함, 고정 질문 단일 실행 (2026-10-06) |
+| 자연어 평가셋 dev (Gemini + 프롬프트 v1) | 정답률 82.1% (69/84) | 조건 해석만 측정, 1회 실행. 과잉 거절 22.0%, 형식 오류 4건, 결과 제공 54.8% |
+| 자연어 평가셋 dev (Gemini + 프롬프트 v2) | 정답률 95.2% (80/84) | 오답 분석에 쓴 질문(in-sample). 과잉 거절 6.8%, 형식 오류 0건, 결과 제공 60.7% |
+| 자연어 평가셋 (규칙만, LLM 없음) | dev 25.0%, holdout 26.7% | Gemini 장애 시 대체 경로. dev 결과 제공 2.4% |
 
 ```powershell
 .\.venv\Scripts\python.exe -B -m unittest discover -s tests -q
 .\.venv\Scripts\python.exe -m scripts.evaluate_products
 # 실행 중인 서버로 실제 AI 요청 3개를 보내며 API 할당량을 사용합니다.
 .\.venv\Scripts\python.exe -m scripts.evaluate_products --live
+# 자연어 평가셋. 서버·DB 없이 실행하며 llm 모드는 질문당 Gemini 1회를 호출합니다.
+.\.venv\Scripts\python.exe -m scripts.evaluate_nl --engine llm --prompt v2
+.\.venv\Scripts\python.exe -m scripts.evaluate_nl --engine llm --prompt v2 --dataset holdout
 ```
 
 실제 DB 평가는 제공 CSV와 동일한 30개 상품을 전제로 합니다. 위 결과는 일반 자연어 정확도 100%를 의미하지 않습니다.
 
 실제 검증에서 API 503/시간 초과와 “추천”을 미지원 조건으로 분류하는 문제를 구분했습니다. 모델 비교 후 프롬프트에 요청 동사와 상품 조건의 구분을 추가했고, 같은 모델의 고정 질문 검증이 2/3에서 3/3으로 바뀌었습니다. 실패 원본을 포함한 [문제 해결 기록](docs/evaluation/product-validation.md)을 공개합니다. 개발에 사용한 질문을 재검증한 결과이며 별도 평가셋의 정확도나 속도 개선률로 주장하지 않습니다.
 
+### 자연어 평가셋과 프롬프트 v2 (2026-11-17)
+
+3문항 검증의 한계를 넘기 위해 라벨을 붙인 평가셋을 만들었습니다. dev 84문항(8개 유형)은 오답 분석용이고, holdout 30문항은 프롬프트 작성에 쓰지 않은 표현으로 일반화를 확인하는 용도입니다.
+
+- v1의 오답 15건 중 9건(60%)은 받는 사람·상황·일반 명칭("부모님", "명절", "간식")을 미지원 조건으로 분류한 경우였습니다. 지원 조건 값은 맞게 뽑았는데도 미지원 항목 하나 때문에 0건이 됐습니다.
+- 4건(27%)은 포장 질문의 형식 오류였습니다. 포장을 두 불리언(포함/제외)으로 받는 구조에서 생긴 문제로 보고 있습니다.
+- v2는 포장 조건을 `packaging` 하나의 값으로 받고, 미지원의 기준(상품 속성만)을 프롬프트에 명시했습니다. 형식 오류가 나면 원인과 원본 일부를 기록하고, `LLM_QUERY_PROMPT_VERSION`으로 v1/v2를 전환해 같은 평가셋으로 비교합니다.
+- dev 84문항에서 v2는 정답률 82.1% → 95.2%, 과잉 거절 22.0% → 6.8%, 형식 오류 4건 → 0건이었습니다. 문항별로 13개가 고쳐졌지만 2개는 새로 틀렸습니다(회귀). 같은 질문을 보고 고친 결과이므로, 일반화는 holdout으로 따로 확인합니다(측정 예정).
+- 평가 집계 중 스키마 검증 실패를 API 오류로 잘못 제외하던 문제를 발견해 고쳤습니다. 이 오류로 10문항 정답률이 88.9%로 과대 집계됐고, 수정 후 80%였습니다.
+
+설계·지표 정의·과정·한계는 [자연어 검색 평가](docs/evaluation/nl-eval-report.md)에 정리했습니다.
+
 ## 파일 구조
 
 ```text
 app/             # FastAPI, DB 접근, 조건 해석, LLM 호출, FAQ 검색, 로그
 scripts/         # 데이터 초기화, 연결 확인, 고정 평가
-data/            # products.csv / faqs.json (모두 가상 데이터)
+data/            # products.csv / faqs.json (가상 데이터), eval_nl_*.json (자연어 평가셋)
 sql/             # products / faqs / ai_logs 테이블 정의
 templates/       # HTML 화면
 static/          # CSS / JavaScript
@@ -201,4 +222,7 @@ requirements.txt # 검증 환경의 고정 패키지 버전
 - FAQ 검색은 키워드 기반이며 부정문·복합 질문에서 오탐할 수 있습니다. 상품별 FAQ 컬럼은 있지만 현재 공통 FAQ만 사용합니다.
 - 상품·출처 ID 검사만으로 생성 문장의 사실성을 완전히 보장할 수 없습니다.
 - 외부 API 장애, 할당량, 모델 변경에 영향을 받습니다. 인증·접속 제한·로그 보존 정책 등 실제 운영 요건은 추가 설계가 필요합니다.
-- 향후 별도 평가 질문 확장, FAQ 검색 개선, 반복 측정과 설명 문장 검토를 진행할 수 있습니다. 리뷰 분석은 이번 MVP에 포함하지 않았습니다.
+- 미지원 조건이 하나라도 있으면 검색하지 않습니다. "선물용 견과류"처럼 지원 조건만으로 보여줄 상품이 있어도 0건입니다. 부분 검색과 안내 방식을 검토 중입니다.
+- 조건 해석 한 번의 지연시간 p95가 v1 측정에서 12.8초, v2 측정에서 4.4초였습니다(각 1회 실행). 실행 시점의 차이일 수 있어 반복 측정이 필요하며, 추천 이유 생성까지 포함하면 더 길어집니다.
+- Gemini 장애 시 규칙 경로는 매우 좁아 결과 제공률이 2.4%입니다.
+- 자연어 평가는 개발자가 붙인 라벨과 1회 실행 기준입니다. 반복 측정, FAQ 검색 개선, 설명 문장 검토를 진행할 수 있습니다. 리뷰 분석은 이번 MVP에 포함하지 않았습니다.
